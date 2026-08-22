@@ -1,0 +1,4 @@
+#!/bin/bash
+# Rampage RGB Controller CLI Executable Wrapper for macOS
+DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+python3 "$DIR/cli.py" "$@"
