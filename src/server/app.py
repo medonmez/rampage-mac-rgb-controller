@@ -79,16 +79,49 @@ def _palette_arg(value: Any) -> Optional[Dict[int, str]]:
     raise ValueError("palette liste veya sözlük olmalı")
 
 
+NAMED_COLORS = {
+    "red": "#FF0000", "kırmızı": "#FF0000", "green": "#00FF00", "yeşil": "#00FF00",
+    "blue": "#0000FF", "mavi": "#0000FF", "white": "#FFFFFF", "beyaz": "#FFFFFF",
+    "cyan": "#00FFFF", "yellow": "#FFFF00", "sarı": "#FFFF00",
+    "magenta": "#FF00FF", "purple": "#A020F0", "mor": "#A020F0", "orange": "#FF8000", "turuncu": "#FF8000",
+}
+
+
+def _color_arg(color: Any, palette: Any):
+    """Accept a preset index (0-7), 'random'/'rainbow', a colour name or '#RRGGBB'."""
+    palette = _palette_arg(palette)
+    if color is None or isinstance(color, bool):
+        return None, palette
+    if isinstance(color, (int, float)) or str(color).isdigit():
+        value = int(color)
+        if not 0 <= value <= COLOR_RANDOM:
+            raise ValueError("color 0-7 arasında olmalı")
+        return value, palette
+    text = str(color).strip().lower()
+    if text in ("random", "rainbow", "rastgele", "renkli"):
+        return COLOR_RANDOM, palette
+    hex_value = NAMED_COLORS.get(text, text if text.startswith("#") else None)
+    if not hex_value:
+        raise ValueError(f"Bilinmeyen renk: {color}")
+    return 0, {**(palette or {}), 0: hex_value}
+
+
+def _mode_title(profile: Dict[str, Any]) -> str:
+    mode = str(profile.get("mode", "")).lower()
+    if mode in ("custom", "custom_preset"):
+        return f"Özel tuş profili {profile.get('profile') or profile.get('custom_preset') or 1}"
+    try:
+        return MODES[resolve_mode(mode)]["title"]
+    except ValueError:
+        return mode
+
+
 def apply_settings(body: Dict[str, Any]) -> Dict[str, Any]:
     """Validate a settings body and send it to the keyboard."""
     if str(body.get("mode", "")).lower() in ("custom", "custom_preset"):
         return get_driver().apply_custom(int(body.get("profile") or body.get("custom_preset") or 1))
     mode_id = resolve_mode(body.get("mode"))
-    color = body.get("color")
-    if color is not None:
-        color = int(color)
-        if not 0 <= color <= COLOR_RANDOM:
-            raise ValueError("color 0-7 arasında olmalı")
+    color, palette = _color_arg(body.get("color"), body.get("palette"))
     direction = body.get("direction_left")
     return get_driver().apply(
         mode_id,
@@ -96,7 +129,7 @@ def apply_settings(body: Dict[str, Any]) -> Dict[str, Any]:
         brightness=_opt_level(body, "brightness"),
         color=color,
         direction_left=None if direction is None else bool(direction),
-        palette=_palette_arg(body.get("palette")),
+        palette=palette,
     )
 
 
@@ -148,7 +181,7 @@ class RampageAPIHandler(SimpleHTTPRequestHandler):
         elif path == "/api/device/layout":
             self._send_json({"rows": KEYBOARD_LAYOUT})
         elif path == "/api/profiles":
-            self._send_json(load_profiles())
+            self._send_json([{**p, "mode_title": _mode_title(p)} for p in load_profiles()])
         else:
             super().do_GET()
 

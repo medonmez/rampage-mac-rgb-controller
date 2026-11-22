@@ -21,7 +21,7 @@ Pages (verified on the keyboard by write + read back):
                   bit 7 = direction (1 = left)
     [33 + 2*m]    mode m packed byte: (speed << 4) | brightness, both 0..4
 * Colour page  (write ``06 08 A8 00 40 00``)
-    [8 + 21*m + 3*p .. +2]   mode m, preset p (0..6) colour as R, G, B
+    [8 + 21*m + 3*p .. +2]   mode m, preset p (0..6) colour as B, G, R
 
 The mode list and offsets follow OpenRGB's SinowealthKeyboard16 controller,
 which targets this USB id, and match what the keyboard shows for each id.
@@ -313,7 +313,8 @@ def get_palette(colors: bytes, mode_id: int) -> List[str]:
     out = []
     for p in range(COLORS_PER_MODE):
         o = _color_offset(mode_id, p)
-        out.append(to_hex(colors[o], colors[o + 1], colors[o + 2]))
+        # stored as B, G, R
+        out.append(to_hex(colors[o + 2], colors[o + 1], colors[o]))
     return out
 
 
@@ -330,7 +331,7 @@ def build_colors_page(
             raise ValueError(f"Geçersiz renk yuvası: {preset}")
         r, g, b = parse_hex_color(value)
         o = _color_offset(mode_id, preset)
-        page[o], page[o + 1], page[o + 2] = r, g, b
+        page[o], page[o + 1], page[o + 2] = b, g, r  # firmware order is B, G, R
     return page
 
 

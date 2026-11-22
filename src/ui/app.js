@@ -331,6 +331,9 @@ function changed() {
 function selectMode(id) {
   ui.mode = id;
   ui.dirtyPalette = {};
+  // A slot stored with brightness 0 looks broken (the mode shows nothing).
+  const s = cur();
+  if (s.brightness === 0) s.brightness = 4;
   changed();
 }
 
@@ -372,7 +375,7 @@ function renderProfiles() {
     li.querySelector('.dot').style.background = sw || 'conic-gradient(#ff2e63,#2fd27f,#2ea8ff,#ff2e63)';
     li.querySelector('.name').textContent = p.name;
     li.querySelector('.name').title = 'Uygula';
-    li.querySelector('.meta').textContent = mid ? mid.title : p.mode;
+    li.querySelector('.meta').textContent = p.mode_title || (mid ? mid.title : p.mode);
     li.querySelector('.name').onclick = () => applyProfile(p);
 
     const apply = document.createElement('button');
@@ -390,7 +393,7 @@ function renderProfiles() {
       del.onclick = async () => {
         if (!confirm(`“${p.name}” silinsin mi?`)) return;
         const res = await api('DELETE', `/api/profiles?id=${encodeURIComponent(p.id)}`);
-        if (res.success) { ui.profiles = res.profiles; renderProfiles(); }
+        if (res.success) { ui.profiles = await api("GET", "/api/profiles"); renderProfiles(); }
       };
       li.appendChild(del);
     }
@@ -426,7 +429,7 @@ async function saveProfile(e) {
     palette: s.color === RANDOM ? null : { [s.color]: s.palette[s.color] },
   });
   if (res.success) {
-    ui.profiles = res.profiles;
+    ui.profiles = await api("GET", "/api/profiles");
     $('profile-name').value = '';
     renderProfiles();
     toast(`“${name}” kaydedildi`);
