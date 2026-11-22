@@ -71,15 +71,16 @@ CUSTOM_PROFILES = 5
 MAX_LEVEL = 4             # speed and brightness are 0..4
 
 # id: (key, Turkish title, short description, flags)
-# flags: s = speed, c = colour selectable, d = direction, r = reacts to key presses
+# flags: s = speed, c = colour selectable, d = direction, r = reacts to key presses,
+#        x = listed by OpenRGB but shows nothing on the Rampage keyboard (hidden)
 _MODE_TABLE = [
     (0, "off", "Kapalı", "Tüm LED'ler sönük", ""),
     (1, "color_cycle", "Renk Döngüsü", "Tüm klavye renkten renge geçer", "s"),
     (2, "breathing", "Nefes", "Yavaşça yanıp sönen ışık", "sc"),
     (3, "static", "Sabit Renk", "Tek renk, sabit ışık", "c"),
-    (4, "ripples", "Dalgacıklar", "Basılan tuştan halkalar yayılır", "scr"),
+    (4, "ripples", "Dalgacıklar", "Basılan tuştan halkalar yayılır", "scrx"),
     (5, "reaction", "Tepki", "Basılan tuş yanıp söner", "scr"),
-    (6, "flash_away", "Kaybolan Işık", "Basılan tuştan ışık yayılıp kaybolur", "scr"),
+    (6, "flash_away", "Kaybolan Işık", "Basılan tuştan ışık yayılıp kaybolur", "scrx"),
     (7, "sine_wave", "Sinüs Dalgası", "Klavye boyunca dalgalanan ışık", "sc"),
     (8, "raindrops", "Yağmur Damlaları", "Rastgele parlayan damlalar", "sc"),
     (9, "rainbow", "Gökkuşağı Dalgası", "Klavye boyunca akan spektrum", "sd"),
@@ -101,6 +102,7 @@ MODES: Dict[int, Dict[str, Any]] = {
         "has_color": "c" in flags,
         "has_direction": "d" in flags,
         "reactive": "r" in flags,
+        "supported": "x" not in flags,
     }
     for mid, key, title, desc, flags in _MODE_TABLE
 }

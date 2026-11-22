@@ -179,7 +179,6 @@ function cur() {
 /* ---------------- Rendering ---------------- */
 function renderAll() {
   renderModes();
-  renderCustom();
   renderSettings();
   renderPower();
 }
@@ -193,39 +192,10 @@ function renderPower() {
   $('preview-title').textContent = title;
 }
 
-function renderCustom() {
-  const box = $('custom-profiles');
-  if (!box.childElementCount) {
-    for (let i = 1; i <= (ui.customCount || 5); i++) {
-      const b = document.createElement('button');
-      b.setAttribute('role', 'radio');
-      b.dataset.v = i;
-      b.textContent = `CM${i}`;
-      b.title = `Klavyede kayıtlı özel profil ${i} (Fn+${i})`;
-      b.onclick = () => selectCustom(i);
-      box.appendChild(b);
-    }
-  }
-  box.querySelectorAll('button').forEach((b) => {
-    b.setAttribute('aria-checked', String(ui.powerOn && ui.perKey && Number(b.dataset.v) === ui.customPreset));
-  });
-}
-
-async function selectCustom(i) {
-  clearTimeout(applyTimer);
-  ui.perKey = true;
-  ui.customPreset = i;
-  ui.perKeyTitle = `Özel tuş profili ${i}`;
-  ui.powerOn = true;
-  ui.lastLocalChange = Date.now();
-  renderAll();
-  await send('/api/device/custom', { profile: i });
-}
-
 function renderModes() {
   const box = $('modes');
   if (!box.childElementCount) {
-    ui.modes.filter((m) => m.id !== 0).forEach((m) => {
+    ui.modes.filter((m) => m.id !== 0 && m.supported !== false).forEach((m) => {
       const b = document.createElement('button');
       b.className = 'mode';
       b.setAttribute('role', 'radio');
@@ -662,7 +632,6 @@ async function init() {
   }
   ui.modes = modes.modes;
   ui.defaultPalette = modes.default_palette;
-  ui.customCount = modes.custom_profiles;
   ui.profiles = Array.isArray(profiles) ? profiles : [];
 
   setupEvents();

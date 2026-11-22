@@ -64,6 +64,8 @@ def cmd_status(args):
 def cmd_list_modes(args):
     banner()
     for mid, m in MODES.items():
+        if not m.get("supported", True):
+            continue
         feats = [n for f, n in (("has_speed", "hız"), ("has_color", "renk"), ("has_direction", "yön")) if m[f]]
         print(f"  {mid:>2}  {CYAN}{m['name']:<14}{RESET} {m['title']:<20} {GREY}{', '.join(feats)}{RESET}")
 

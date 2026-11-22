@@ -7,7 +7,7 @@ SinoWealth / BY Tech üretimi USB denetleyici yongasına sahip (**VID: `0x258A` 
 ## 🌟 Özellikler
 
 - **Sıfır bağımlılık:** Python 3 + macOS'un yerleşik `IOKit` / `CoreFoundation` kütüphaneleri (`ctypes`).
-- **15 donanım efektinin tamamı + 5 özel tuş profili:** her efektin kendi hızı (0-4), parlaklığı (0-4), yönü ve 7 renklik paleti klavyenin belleğine yazılır.
+- **Klavyede çalışan 12 donanım efekti:** her efektin kendi hızı (0-4), parlaklığı (0-4), yönü ve 7 renklik paleti klavyenin belleğine yazılır.
 - **Oku → değiştir → yaz → doğrula:** uygulama klavyenin kendi ayar sayfasını okur, sadece ilgili baytları değiştirir, yazar ve geri okuyarak gerçekten uygulandığını kontrol eder. Fn tuşlarıyla yapılan değişiklikler arayüze yansır.
 - **Doğru protokol:** klavye OpenRGB'nin `SinowealthKeyboard16` protokolünü konuşuyor (ayar sayfası `0x00`, renk sayfası `0xA8`, mod başına ayar yuvası `32+2m`). Önceki sürümün kullandığı F11 şablonları bu klavyede etkisizdi.
 - **Anlaşılır hata durumları:** macOS izni yoksa, klavye takılı değilse veya başka bir uygulama kullanıyorsa arayüz bunu açıkça söyler.
@@ -19,7 +19,7 @@ SinoWealth / BY Tech üretimi USB denetleyici yongasına sahip (**VID: `0x258A` 
 
 ## ⚡ Efektler
 
-Renk Döngüsü, Nefes, Sabit Renk, Dalgacıklar\*, Tepki\*, Kaybolan Işık\*, Sinüs Dalgası, Yağmur Damlaları, Gökkuşağı Dalgası, Gökkuşağı Çarkı, Süsleme, Yıldız Pırıltısı, Gölge\*, Retro Yılan. (\* tuşa basınca çalışır.) Ayrıca klavyede kayıtlı 5 özel tuş profili (CM1–CM5). Liste: `python3 cli.py list-modes`.
+Renk Döngüsü, Nefes, Sabit Renk, Tepki\*, Sinüs Dalgası, Yağmur Damlaları, Gökkuşağı Dalgası, Gökkuşağı Çarkı, Süsleme, Yıldız Pırıltısı, Gölge\*, Retro Yılan. (\* tuşa basınca çalışır.) Liste: `python3 cli.py list-modes`.
 
 ---
 
@@ -48,7 +48,6 @@ python3 cli.py mode breathing --color "#00B4FF"         # renk: #RRGGBB, 1-7 (pa
 python3 cli.py static "#FF8800" -b 3                    # tüm tuşlar tek renk
 python3 cli.py off / on                                 # kapat / son efekti geri aç
 python3 cli.py profile red_dragon                       # kayıtlı profil
-python3 cli.py custom 2                                 # klavyedeki özel tuş profili 2 (CM2)
 python3 cli.py list-modes / list-profiles
 ```
 
