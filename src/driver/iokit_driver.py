@@ -214,7 +214,7 @@ class RampageKeyboardDriver:
         self.error_code = code
         self.error = message
         self._connected = False
-        logger.warning(message)
+        logger.info(message)
 
     def _close_internal(self):
         if self._device:
