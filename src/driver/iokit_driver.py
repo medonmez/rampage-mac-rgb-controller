@@ -141,7 +141,7 @@ class RampageKeyboardDriver:
         self._synced = False
         self.readback_supported: Optional[bool] = None
         self.last_verified: Optional[bool] = None
-        self.last_on_mode = 3
+        self.last_on_mode = 9
         self.last_updated = time.time()
         self.variant: Optional[str] = None
         self.variant_confirmed = False
@@ -313,7 +313,7 @@ class RampageKeyboardDriver:
         if colors is not None:
             self._colors = colors
         self._synced = True
-        if config[P.IDX_MODE] and not config[P.IDX_PER_KEY]:
+        if config[P.IDX_MODE] in P.MODES and config[P.IDX_MODE] and not P.is_custom(config):
             self.last_on_mode = config[P.IDX_MODE]
         self.last_updated = time.time()
         return True
@@ -356,7 +356,11 @@ class RampageKeyboardDriver:
         return [first] + [v for v in P.VARIANTS if v != first]
 
     def _is_applied(self, readback: Optional[bytes], config: bytes, mode_id: int) -> bool:
-        if readback is None or readback[P.IDX_MODE] != mode_id or readback[P.IDX_PER_KEY]:
+        if readback is None:
+            return False
+        if mode_id == P.MODE_CUSTOM:
+            return P.is_custom(readback) and readback[P.IDX_CUSTOM] == config[P.IDX_CUSTOM]
+        if readback[P.IDX_MODE] != mode_id or readback[P.IDX_PER_KEY]:
             return False
         if mode_id == 0:
             return True
@@ -382,21 +386,34 @@ class RampageKeyboardDriver:
         the keyboard cannot be read back.
         """
         mode_id = P.resolve_mode(mode)
+
+        def build():
+            config = P.build_config_page(self._config, mode_id, speed, brightness, color, direction_left)
+            colors = P.build_colors_page(self._colors, mode_id, palette) if palette and mode_id else None
+            return config, colors
+
+        return self._run(mode_id, build)
+
+    def apply_custom(self, profile: int) -> Dict[str, Any]:
+        """Switch to the per-key custom profile stored on the keyboard (1..5)."""
+        index = int(profile) - 1
+        P.build_custom_page(self._config, index)  # validates the range
+        return self._run(P.MODE_CUSTOM, lambda: (P.build_custom_page(self._config, index), None))
+
+    def _run(self, mode_id, build) -> Dict[str, Any]:
         with self._lock:
             try:
                 self._ensure_connected()
-                result = self._apply_locked(mode_id, speed, brightness, color, direction_left, palette)
+                # Refresh from hardware so we never overwrite settings changed with Fn keys.
+                self._sync_from_device()
+                config, colors = build()
+                result = self._send(mode_id, config, colors)
             except DeviceError as e:
                 result = {"success": False, "verified": False, "error": str(e)}
             self.last_verified = result["verified"]
             return result
 
-    def _apply_locked(self, mode_id, speed, brightness, color, direction_left, palette):
-        # Refresh from hardware so we never overwrite settings changed with Fn keys.
-        self._sync_from_device()
-        config = P.build_config_page(self._config, mode_id, speed, brightness, color, direction_left)
-        colors = P.build_colors_page(self._colors, mode_id, palette) if palette and mode_id else None
-
+    def _send(self, mode_id, config, colors):
         for variant in self._candidates():
             cfg_page, col_page = self._pages(variant)
             init = P.VARIANTS[variant]["init"]
@@ -431,15 +448,14 @@ class RampageKeyboardDriver:
         return {
             "success": False,
             "verified": False,
-            "error": "Klavye komutu kabul etmedi (geri okumada değişiklik yok). "
-                     "Klavye bu protokolü desteklemiyor olabilir.",
+            "error": "Klavye komutu kabul etmedi (geri okumada değişiklik yok).",
         }
 
     def _commit(self, mode_id, config, colors):
         self._config = bytearray(config)
         if colors is not None:
             self._colors = bytearray(colors)
-        if mode_id:
+        if mode_id in P.MODES and mode_id:
             self.last_on_mode = mode_id
         self.last_updated = time.time()
 
@@ -449,13 +465,13 @@ class RampageKeyboardDriver:
 
     def set_static_color(self, color: str = "#FF0000", brightness: Optional[int] = None) -> Dict[str, Any]:
         """Solid colour on every key (any RGB value)."""
-        return self.apply(1, brightness=brightness, color=0, palette={0: color})
+        return self.apply("static", brightness=brightness, color=0, palette={0: color})
 
     def turn_off(self) -> Dict[str, Any]:
         return self.apply(0)
 
     def turn_on(self) -> Dict[str, Any]:
-        return self.apply(self.last_on_mode or 3)
+        return self.apply(self.last_on_mode or 9)
 
     def refresh(self) -> bool:
         with self._lock:

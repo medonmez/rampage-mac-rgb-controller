@@ -11,7 +11,7 @@ from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 
-from ..driver.protocol import VARIANTS
+from ..driver.protocol import CUSTOM_PROFILES
 from ..driver import (
     get_driver, MODES, KEYBOARD_LAYOUT, DEFAULT_PALETTE, COLOR_RANDOM, MAX_LEVEL, resolve_mode,
 )
@@ -81,6 +81,8 @@ def _palette_arg(value: Any) -> Optional[Dict[int, str]]:
 
 def apply_settings(body: Dict[str, Any]) -> Dict[str, Any]:
     """Validate a settings body and send it to the keyboard."""
+    if str(body.get("mode", "")).lower() in ("custom", "custom_preset"):
+        return get_driver().apply_custom(int(body.get("profile") or body.get("custom_preset") or 1))
     mode_id = resolve_mode(body.get("mode"))
     color = body.get("color")
     if color is not None:
@@ -141,7 +143,7 @@ class RampageAPIHandler(SimpleHTTPRequestHandler):
                 "default_palette": DEFAULT_PALETTE,
                 "color_random": COLOR_RANDOM,
                 "max_level": MAX_LEVEL,
-                "protocols": {k: v["title"] for k, v in VARIANTS.items()},
+                "custom_profiles": CUSTOM_PROFILES,
             })
         elif path == "/api/device/layout":
             self._send_json({"rows": KEYBOARD_LAYOUT})
@@ -167,10 +169,8 @@ class RampageAPIHandler(SimpleHTTPRequestHandler):
                 self._result(drv.turn_off())
             elif path == "/api/device/on":
                 self._result(drv.turn_on())
-            elif path == "/api/device/protocol":
-                proto = body.get("protocol") or None
-                drv.set_variant(proto)
-                self._result({"success": True, "error": None})
+            elif path == "/api/device/custom":
+                self._result(drv.apply_custom(int(body.get("profile", 1))))
             elif path == "/api/device/reconnect":
                 ok = drv.connect()
                 self._result({"success": ok, "error": None if ok else drv.error})

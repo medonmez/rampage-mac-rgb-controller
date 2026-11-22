@@ -214,3 +214,7 @@ input[type="color"] { width: 40px; height: 32px; border: 1px solid var(--line-st
   .topbar-actions { flex-wrap: wrap; }
   .modes { grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); }
 }
+
+.custom-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); }
+.custom-row h3 { font-size: 13px; font-weight: 650; }
+.seg-custom { grid-template-columns: repeat(5, minmax(44px, 1fr)); }

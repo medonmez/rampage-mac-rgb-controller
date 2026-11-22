@@ -5,25 +5,26 @@ The firmware keeps its lighting state in 1032-byte "pages" that are read and
 written through HID feature reports:
 
 * Report 5 (6 bytes)    -> command channel. ``05 8X <addr> 00 <len> 00`` asks
-                           the keyboard to load page ``addr`` for reading.
+                           the keyboard to load a page for reading;
+                           ``05 01 AA BB 2F 3E`` initialises the session.
 * Report 6 (1032 bytes) -> data channel. A GET returns the requested page, a
                            SET writes a page (``06 0X <addr> 00 <len> 00 ...``).
 
-Pages used here:
+Pages (verified on the keyboard by write + read back):
 
-* Config page  (cmd 0x03, addr 0xB6)
-    [20]          per-key (custom) mode flag
-    [21]          active mode id (0 = off, 1..20 = effects)
-    [22]          0x20 | custom preset
-    [36 + 2*m]    mode m colour byte: bits 0-2 colour preset (0..6, 7 = random/
-                  colourful), bit 7 = direction (1 = left)
-    [37 + 2*m]    mode m packed byte: (speed << 4) | brightness, both 0..4
-* Colour page  (cmd 0x08, addr 0xB8)
+* Config page  (write ``06 03 00 00 00 00``)
+    [14:16]       0x5A 0xA5 magic
+    [20]          1 = a custom per-key profile is active
+    [21]          active mode id (0 = off, 1..14 effects, 0x0F custom)
+    [22]          0x20 | custom profile index (0..4)
+    [32 + 2*m]    mode m colour byte: bits 0-2 colour preset (0..6, 7 = random),
+                  bit 7 = direction (1 = left)
+    [33 + 2*m]    mode m packed byte: (speed << 4) | brightness, both 0..4
+* Colour page  (write ``06 08 A8 00 40 00``)
     [8 + 21*m + 3*p .. +2]   mode m, preset p (0..6) colour as R, G, B
 
-Offsets were derived from the captured vendor-software templates in
-``templates/`` (they differ only in the bytes listed above) and match the
-layout documented by the OpenRGB project for SinoWealth keyboards.
+The mode list and offsets follow OpenRGB's SinowealthKeyboard16 controller,
+which targets this USB id, and match what the keyboard shows for each id.
 """
 import json
 from pathlib import Path
@@ -42,24 +43,16 @@ PAYLOAD_LEN = 1032
 TEMPLATE_DIR = Path(__file__).resolve().parent / "templates"
 
 # Page descriptors: (write command, address, length byte)
-PAGE_CONFIG = (0x03, 0xB6, 0x00)
-PAGE_COLORS = (0x08, 0xB8, 0x40)
+PAGE_CONFIG = (0x03, 0x00, 0x00)
+PAGE_COLORS = (0x08, 0xA8, 0x40)
+INIT_COMMAND = bytes([0x05, 0x01, 0xAA, 0xBB, 0x2F, 0x3E])
 
-# SinoWealth boards sharing 258A:0016 use the same page layout but different
-# page addresses. Reads work at either address on the tested keyboard, so the
-# only reliable way to find the right variant is write + read back.
 VARIANTS: Dict[str, Dict[str, Any]] = {
     "kb16": {
-        "title": "SinoWealth 0016 (OpenRGB 'Keyboard16')",
-        "config": (0x03, 0x00, 0x00),
-        "colors": (0x08, 0xA8, 0x40),
-        "init": bytes([0x05, 0x01, 0xAA, 0xBB, 0x2F, 0x3E]),
-    },
-    "f11": {
-        "title": "SinoWealth F11 şablonu (eski uygulama)",
+        "title": "SinoWealth 0016",
         "config": PAGE_CONFIG,
         "colors": PAGE_COLORS,
-        "init": None,
+        "init": INIT_COMMAND,
     },
 }
 DEFAULT_VARIANT = "kb16"
@@ -68,37 +61,33 @@ IDX_PER_KEY = 20
 IDX_MODE = 21
 IDX_CUSTOM = 22
 IDX_MAGIC = 14            # 0x5A 0xA5 marks a valid config page
-MODE_SLOT_BASE = 36       # colour byte of mode m = 36 + 2m, packed byte = 37 + 2m
+MODE_SLOT_BASE = 32       # colour byte of mode m = 32 + 2m, packed byte = 33 + 2m
 COLOR_BASE = 8
 COLORS_PER_MODE = 7
 COLOR_RANDOM = 7          # "colourful" / random colour option
+MODE_CUSTOM = 0x0F        # per-key custom profiles (CM1..CM5, Fn+1..5)
+CUSTOM_PROFILES = 5
 
 MAX_LEVEL = 4             # speed and brightness are 0..4
 
 # id: (key, Turkish title, short description, flags)
-# flags: s = speed, c = colour selectable, d = direction
+# flags: s = speed, c = colour selectable, d = direction, r = reacts to key presses
 _MODE_TABLE = [
     (0, "off", "Kapalı", "Tüm LED'ler sönük", ""),
-    (1, "static", "Sabit Renk", "Tek renk, sabit ışık", "c"),
+    (1, "color_cycle", "Renk Döngüsü", "Tüm klavye renkten renge geçer", "s"),
     (2, "breathing", "Nefes", "Yavaşça yanıp sönen ışık", "sc"),
-    (3, "rainbow", "Gökkuşağı Dalgası", "Klavye boyunca akan spektrum", "sd"),
-    (4, "flash_away", "Kaybolan Işık", "Basılan tuştan yayılıp sönen ışık", "sc"),
-    (5, "raindrops", "Yağmur Damlaları", "Rastgele düşen ışık damlaları", "sc"),
-    (6, "rainbow_wheel", "Gökkuşağı Çarkı", "Merkez etrafında dönen spektrum", "sd"),
-    (7, "ripples", "Dalgacıklar", "Basılan tuştan yayılan halkalar", "sc"),
-    (8, "stars", "Yıldız Pırıltısı", "Rastgele parlayan tuşlar", "sc"),
-    (9, "shadow", "Gölge", "Basılan tuş yanar, sonra kaybolur", "sc"),
-    (10, "snake", "Retro Yılan", "Tuşlar üzerinde gezen yılan", "scd"),
-    (11, "neon", "Neon Akış", "Tüm klavyede yavaş renk geçişi", "s"),
-    (12, "reaction", "Tepki", "Basılan tuşu aydınlatır", "sc"),
-    (13, "sine_wave", "Sinüs Dalgası", "Dalgalanan parlaklık", "scd"),
-    (14, "scanning", "Tarama", "Soldan sağa tarayan çizgi", "scd"),
-    (15, "windmill", "Yel Değirmeni", "Dönen ışık kanatları", "scd"),
-    (16, "waterfall", "Renkli Şelale", "Yukarıdan aşağı akan renkler", "sd"),
-    (17, "blossom", "Çiçeklenme", "Merkezden açılan renkler", "sc"),
-    (18, "storm", "Dönen Fırtına", "Spiral şeklinde dönen renkler", "scd"),
-    (19, "collision", "Çarpışma", "İki uçtan gelip çarpışan ışıklar", "sc"),
-    (20, "perfect", "Kusursuz", "Renk döngüsü", "s"),
+    (3, "static", "Sabit Renk", "Tek renk, sabit ışık", "c"),
+    (4, "ripples", "Dalgacıklar", "Basılan tuştan halkalar yayılır", "scr"),
+    (5, "reaction", "Tepki", "Basılan tuş yanıp söner", "scr"),
+    (6, "flash_away", "Kaybolan Işık", "Basılan tuştan ışık yayılıp kaybolur", "scr"),
+    (7, "sine_wave", "Sinüs Dalgası", "Klavye boyunca dalgalanan ışık", "sc"),
+    (8, "raindrops", "Yağmur Damlaları", "Rastgele parlayan damlalar", "sc"),
+    (9, "rainbow", "Gökkuşağı Dalgası", "Klavye boyunca akan spektrum", "sd"),
+    (10, "rainbow_wheel", "Gökkuşağı Çarkı", "Merkez etrafında dönen spektrum", "sd"),
+    (11, "adorn", "Süsleme", "Hareketli renk deseni", "s"),
+    (12, "stars", "Yıldız Pırıltısı", "Rastgele parlayan tuşlar", "sc"),
+    (13, "shadow", "Gölge", "Basılan tuş söner, sonra geri gelir", "scr"),
+    (14, "snake", "Retro Yılan", "Tuşlar üzerinde gezen yılan", "sc"),
 ]
 
 MODES: Dict[int, Dict[str, Any]] = {
@@ -111,6 +100,7 @@ MODES: Dict[int, Dict[str, Any]] = {
         "has_brightness": mid != 0,
         "has_color": "c" in flags,
         "has_direction": "d" in flags,
+        "reactive": "r" in flags,
     }
     for mid, key, title, desc, flags in _MODE_TABLE
 }
@@ -118,11 +108,11 @@ MODES: Dict[int, Dict[str, Any]] = {
 MODE_BY_NAME: Dict[str, int] = {m["name"]: mid for mid, m in MODES.items()}
 MODE_BY_NAME.update({
     # Aliases kept for older profiles / CLI habits
-    "red": 1, "kırmızı": 1, "sabit": 1,
-    "spectrum": 3, "gökkuşağı": 3, "wave": 3,
-    "wheel": 6, "star": 8, "star_twinkle": 8,
-    "yılan": 10, "retro_snake": 10,
-    "sine": 13, "rainbow_blossom": 17, "blossoming": 17,
+    "red": 3, "kırmızı": 3, "sabit": 3, "color_loop": 1, "neon": 1, "neon_stream": 1,
+    "spectrum": 9,
+    "gökkuşağı": 9, "wave": 9, "wheel": 10,
+    "star": 12, "star_twinkle": 12, "yılan": 14, "retro_snake": 14,
+    "sine": 7, "nefes": 2, "respire": 2,
     "kapalı": 0, "kapat": 0,
 })
 
@@ -183,8 +173,8 @@ def read_request(page: Tuple[int, int, int]) -> bytes:
 # The firmware may answer with fewer bytes than the full page (the config page
 # comes back as 80 bytes on macOS). These are the minimum useful lengths.
 MIN_READ = {
-    0x03: MODE_SLOT_BASE + 2 * 21,                 # config: through mode 20's slot
-    0x08: COLOR_BASE + COLORS_PER_MODE * 3 * 21,   # colours: through mode 20's palette
+    0x03: MODE_SLOT_BASE + 2 * len(MODES),                 # config: all mode slots
+    0x08: COLOR_BASE + COLORS_PER_MODE * 3 * len(MODES),   # colours: all palettes
 }
 
 
@@ -213,7 +203,7 @@ def is_valid_config(page: Optional[bytes]) -> bool:
         and len(page) == PAYLOAD_LEN
         and page[IDX_MAGIC] == 0x5A
         and page[IDX_MAGIC + 1] == 0xA5
-        and page[IDX_MODE] in MODES
+        and (page[IDX_MODE] in MODES or page[IDX_MODE] == MODE_CUSTOM or page[IDX_PER_KEY])
     )
 
 
@@ -295,6 +285,22 @@ def build_config_page(
     return page
 
 
+def is_custom(config: bytes) -> bool:
+    return bool(config[IDX_PER_KEY]) or config[IDX_MODE] == MODE_CUSTOM
+
+
+def build_custom_page(base: bytes, profile: int, page_desc: Tuple[int, int, int] = PAGE_CONFIG) -> bytearray:
+    """Switch to the keyboard's stored per-key custom profile ``profile`` (0..4)."""
+    if not 0 <= profile < CUSTOM_PROFILES:
+        raise ValueError(f"Özel profil 1-{CUSTOM_PROFILES} arasında olmalı")
+    page = bytearray(base)
+    page[0:6] = bytes([REPORT_ID_DATA, page_desc[0], page_desc[1], 0, page_desc[2], 0])
+    page[IDX_PER_KEY] = 1
+    page[IDX_MODE] = MODE_CUSTOM
+    page[IDX_CUSTOM] = 0x20 | profile
+    return page
+
+
 # --------------------------------------------------------------------------
 # Colour page encode / decode
 # --------------------------------------------------------------------------
@@ -330,19 +336,19 @@ def build_colors_page(
 
 def describe_state(config: bytes, colors: bytes) -> Dict[str, Any]:
     """Human-readable lighting state decoded from the two pages."""
+    per_key = is_custom(config)
     mode_id = config[IDX_MODE] if config[IDX_MODE] in MODES else 0
-    settings = get_mode_settings(config, mode_id)
+    settings = get_mode_settings(config, 0 if per_key else mode_id)
     info = MODES[mode_id]
-    per_key = bool(config[IDX_PER_KEY])
     custom_preset = (config[IDX_CUSTOM] & 0x0F) + 1
     return {
-        "mode": mode_id,
+        "mode": MODE_CUSTOM if per_key else mode_id,
         "mode_name": "custom" if per_key else info["name"],
         "mode_title": f"Özel tuş profili {custom_preset}" if per_key else info["title"],
         "per_key": per_key,
         "custom_preset": custom_preset,
         **settings,
-        "palette": get_palette(colors, mode_id) if mode_id else list(DEFAULT_PALETTE),
+        "palette": get_palette(colors, mode_id) if mode_id and not per_key else list(DEFAULT_PALETTE),
         "modes": {
             mid: {**get_mode_settings(config, mid), "palette": get_palette(colors, mid)}
             for mid in MODES if mid

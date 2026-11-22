@@ -58,6 +58,13 @@
           <span class="chip" id="mode-count"></span>
         </div>
         <div class="modes" id="modes" role="radiogroup" aria-label="Aydınlatma efekti"></div>
+        <div class="custom-row">
+          <div>
+            <h3>Özel tuş profilleri</h3>
+            <p class="muted small">Klavyede kayıtlı tuş bazlı renkler (Fn+1…5)</p>
+          </div>
+          <div class="seg seg-custom" id="custom-profiles" role="radiogroup" aria-label="Özel tuş profili"></div>
+        </div>
       </section>
 
       <div class="side">
@@ -98,15 +105,6 @@
             </div>
           </div>
           <p class="muted small" id="no-color-note" hidden>Bu efekt renklerini kendisi belirler.</p>
-
-          <details class="advanced">
-            <summary>Gelişmiş</summary>
-            <div class="field">
-              <div class="field-label"><span>Protokol</span><span class="val" id="proto-val"></span></div>
-              <select id="proto-select" aria-label="Protokol varyantı"></select>
-              <p class="muted small">Otomatik: uygulama her iki SinoWealth varyantını dener ve klavyeden geri okuyarak çalışanı kaydeder.</p>
-            </div>
-          </details>
         </section>
 
         <section class="panel">

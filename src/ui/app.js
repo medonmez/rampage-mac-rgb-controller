@@ -5,14 +5,13 @@ const RANDOM = 7;
 const SPEED_LABELS = ['Çok yavaş', 'Yavaş', 'Normal', 'Hızlı', 'Çok hızlı'];
 const BRIGHT_LABELS = ['Kapalı', '%25', '%50', '%75', '%100'];
 const MODE_SWATCH = {
-  1: '#ff2e63', 2: 'radial-gradient(#2ea8ff, #0b2a40)', 3: 'linear-gradient(90deg,#ff2e63,#ffb02e,#2fd27f,#2ea8ff,#a62eff)',
-  4: 'radial-gradient(circle,#fff 0 15%,#ff2e63 40%,#2a0b14)', 5: 'linear-gradient(#0b2a40,#2ea8ff)', 6: 'conic-gradient(#ff2e63,#ffb02e,#2fd27f,#2ea8ff,#a62eff,#ff2e63)',
-  7: 'repeating-radial-gradient(circle,#2ea8ff 0 3px,#0b1a2a 3px 7px)', 8: 'radial-gradient(circle at 30% 30%,#fff 0 8%,transparent 12%),radial-gradient(circle at 70% 65%,#ffe680 0 8%,transparent 12%),#141a2b',
-  9: 'linear-gradient(135deg,#a62eff,#1a0b2a)', 10: 'linear-gradient(90deg,#14301f 0 30%,#2fd27f 30% 70%,#14301f 70%)', 11: 'linear-gradient(135deg,#ff2ed1,#2ee6ff)',
-  12: 'radial-gradient(circle,#ffb02e 0 30%,#2a1a0b 60%)', 13: 'repeating-linear-gradient(90deg,#2ea8ff 0 4px,#0b1a2a 4px 9px)', 14: 'linear-gradient(90deg,#0b2a1a 0 40%,#2fd27f 45% 55%,#0b2a1a 60%)',
-  15: 'conic-gradient(#ffb02e 0 45deg,#1a140b 45deg 90deg,#ffb02e 90deg 135deg,#1a140b 135deg 180deg,#ffb02e 180deg 225deg,#1a140b 225deg 270deg,#ffb02e 270deg 315deg,#1a140b 315deg)',
-  16: 'linear-gradient(#2ee6ff,#2ea8ff,#a62eff,#ff2e63)', 17: 'radial-gradient(circle,#ffe0f0,#ff2e9a 45%,#3a0b24)', 18: 'conic-gradient(from 90deg,#2ea8ff,#a62eff,#ff2e63,#2ea8ff)',
-  19: 'linear-gradient(90deg,#ff2e63 0 20%,#1a0b10 20% 80%,#2ea8ff 80%)', 20: 'linear-gradient(135deg,#ffb02e,#ff2e63,#a62eff,#2ea8ff)',
+  1: 'linear-gradient(135deg,#ff2e63,#ffb02e,#2fd27f,#2ea8ff)', 2: 'radial-gradient(#2ea8ff, #0b2a40)', 3: '#ff2e63',
+  4: 'repeating-radial-gradient(circle,#2ea8ff 0 3px,#0b1a2a 3px 7px)', 5: 'radial-gradient(circle,#ffb02e 0 30%,#2a1a0b 60%)',
+  6: 'radial-gradient(circle,#fff 0 15%,#ff2e63 40%,#2a0b14)', 7: 'repeating-linear-gradient(90deg,#2ea8ff 0 4px,#0b1a2a 4px 9px)',
+  8: 'linear-gradient(#0b2a40,#2ea8ff)', 9: 'linear-gradient(90deg,#ff2e63,#ffb02e,#2fd27f,#2ea8ff,#a62eff)',
+  10: 'conic-gradient(#ff2e63,#ffb02e,#2fd27f,#2ea8ff,#a62eff,#ff2e63)', 11: 'repeating-linear-gradient(45deg,#a62eff 0 5px,#ff2ed1 5px 10px,#2ee6ff 10px 15px)',
+  12: 'radial-gradient(circle at 30% 30%,#fff 0 8%,transparent 12%),radial-gradient(circle at 70% 65%,#ffe680 0 8%,transparent 12%),#141a2b',
+  13: 'linear-gradient(135deg,#a62eff,#1a0b2a)', 14: 'linear-gradient(90deg,#14301f 0 30%,#2fd27f 30% 70%,#14301f 70%)',
 };
 
 const ui = {
@@ -74,12 +73,12 @@ function applyStatus(st, { force = false } = {}) {
   if (!userBusy || force) {
     ui.perKey = Boolean(s.per_key);
     ui.perKeyTitle = s.mode_title;
+    ui.customPreset = s.custom_preset;
     ui.powerOn = s.mode !== 0;
     if (s.mode && !s.per_key) ui.mode = s.mode;
     else if (st.last_on_mode) ui.mode = st.last_on_mode;
     renderAll();
   }
-  renderProtocol(st);
 }
 
 function renderConnection(st) {
@@ -180,6 +179,7 @@ function cur() {
 /* ---------------- Rendering ---------------- */
 function renderAll() {
   renderModes();
+  renderCustom();
   renderSettings();
   renderPower();
 }
@@ -189,18 +189,37 @@ function renderPower() {
   b.setAttribute('aria-pressed', String(ui.powerOn));
   $('power-label').textContent = ui.powerOn ? 'Açık' : 'Kapalı';
   let title = ui.powerOn ? `Önizleme · ${modeInfo(ui.mode).title}` : 'Önizleme · Işıklar kapalı';
-  if (ui.perKey) title = `Klavyede: ${ui.perKeyTitle} · bir efekt seçerek değiştirin`;
+  if (ui.perKey && ui.powerOn) title = `Önizleme · ${ui.perKeyTitle} (klavyede kayıtlı tuş renkleri)`;
   $('preview-title').textContent = title;
 }
 
-function renderProtocol(st) {
-  const sel = $('proto-select');
-  if (!sel.childElementCount && ui.protocols) {
-    sel.add(new Option('Otomatik algıla', ''));
-    for (const [k, title] of Object.entries(ui.protocols)) sel.add(new Option(title, k));
+function renderCustom() {
+  const box = $('custom-profiles');
+  if (!box.childElementCount) {
+    for (let i = 1; i <= (ui.customCount || 5); i++) {
+      const b = document.createElement('button');
+      b.setAttribute('role', 'radio');
+      b.dataset.v = i;
+      b.textContent = `CM${i}`;
+      b.title = `Klavyede kayıtlı özel profil ${i} (Fn+${i})`;
+      b.onclick = () => selectCustom(i);
+      box.appendChild(b);
+    }
   }
-  if (document.activeElement !== sel) sel.value = st.protocol || '';
-  $('proto-val').textContent = st.protocol ? (st.protocol_confirmed ? '✓ doğrulandı' : 'doğrulanmadı') : 'otomatik';
+  box.querySelectorAll('button').forEach((b) => {
+    b.setAttribute('aria-checked', String(ui.powerOn && ui.perKey && Number(b.dataset.v) === ui.customPreset));
+  });
+}
+
+async function selectCustom(i) {
+  clearTimeout(applyTimer);
+  ui.perKey = true;
+  ui.customPreset = i;
+  ui.perKeyTitle = `Özel tuş profili ${i}`;
+  ui.powerOn = true;
+  ui.lastLocalChange = Date.now();
+  renderAll();
+  await send('/api/device/custom', { profile: i });
 }
 
 function renderModes() {
@@ -246,7 +265,7 @@ function renderSettings() {
   const m = modeInfo(ui.mode);
   const s = cur();
   $('settings-title').textContent = m.title;
-  $('settings-desc').textContent = m.description;
+  $('settings-desc').textContent = m.description + (m.reactive ? ' — tuşlara bastıkça çalışır.' : '');
 
   buildSeg('seg-brightness', ['0', '1', '2', '3', '4'], () => s.brightness, (v) => { s.brightness = v; changed(); });
   $('brightness-val').textContent = BRIGHT_LABELS[s.brightness];
@@ -493,7 +512,7 @@ function hsl(h) {
 }
 function hash(n) { const s = Math.sin(n * 127.1) * 43758.5453; return s - Math.floor(s); }
 
-const REACTIVE = new Set([4, 7, 9, 12]);
+const REACTIVE = new Set([4, 5, 6, 13]);
 
 function effect(mode, k, t, ctx) {
   const { s, base, dir, now } = ctx;
@@ -501,35 +520,28 @@ function effect(mode, k, t, ctx) {
   const pick = (h) => (random ? hsl(h) : base);
   const dx = k.nx - 0.5, dy = (k.ny - 0.5) * 0.45;
   const ang = Math.atan2(dy, dx) * 180 / Math.PI;
-  const r = Math.hypot(dx, dy);
   switch (mode) {
-    case 1: return [pick(k.x * 17 + k.y * 40), 1];
+    case 1: return [hsl(t * 40), 1];                                   // colour cycle
     case 2: { const ph = t * 1.6; return [pick(Math.floor(ph / (2 * Math.PI)) * 70), (Math.sin(ph - Math.PI / 2) + 1) / 2]; }
-    case 3: return [hsl(k.nx * 360 - t * 90 * dir), 1];
-    case 5: { const col = Math.round(k.x); const pos = ((t * 0.55 + hash(col)) % 1); const d = (k.ny - pos); return [pick(hash(col + 3) * 360), d < 0 && d > -0.35 ? 1 + d / 0.35 : 0]; }
-    case 6: return [hsl(ang - t * 90 * dir), 1];
-    case 8: { const v = Math.max(0, Math.sin(t * 1.3 + hash(k.order) * 40)); return [pick(hash(k.order + 9) * 360), v ** 6]; }
-    case 10: { const head = (t * 14 * dir + 1e6) % ui.keys.length; let d = (head - k.order) * dir; d = ((d % ui.keys.length) + ui.keys.length) % ui.keys.length; return [pick(k.order * 6), d < 10 ? 1 - d / 10 : 0]; }
-    case 11: return [hsl(t * 40), 1];
-    case 13: return [pick(k.nx * 200 + t * 30), (Math.sin(k.nx * 12 - t * 3 * dir) + 1) / 2];
-    case 14: { const p = (Math.sin(t * 1.4) + 1) / 2; const pos = dir > 0 ? p : 1 - p; return [pick(t * 50), Math.max(0, 1 - Math.abs(k.nx - pos) * 9)]; }
-    case 15: return [pick(ang + t * 40), ((Math.cos(((ang - t * 120 * dir) * 4) * Math.PI / 180) + 1) / 2) ** 2];
-    case 16: return [hsl(k.ny * 200 - t * 110 * dir + k.nx * 30), 1];
-    case 17: { const v = (Math.sin(r * 18 - t * 3) + 1) / 2; return [pick(r * 500 - t * 60), 0.25 + 0.75 * v]; }
-    case 18: return [pick(ang + r * 700 - t * 150 * dir), 0.35 + 0.65 * ((Math.sin((ang + r * 700 - t * 150 * dir) * Math.PI / 90) + 1) / 2)];
-    case 19: { const p = (t * 0.45) % 1; const a = Math.max(0, 1 - Math.abs(k.nx - p * 0.5) * 12), b = Math.max(0, 1 - Math.abs(k.nx - (1 - p * 0.5)) * 12); const flash = p > 0.92 ? (1 - (p - 0.92) / 0.08) * Math.max(0, 1 - r * 4) : 0; return [a >= b ? pick(0) : pick(200), Math.min(1, Math.max(a, b, flash))]; }
-    case 20: return [hsl(t * 60 + k.nx * 40), 1];
+    case 3: return [pick(k.x * 17 + k.y * 40), 1];                     // static
+    case 7: return [pick(k.nx * 200 + t * 30), (Math.sin(k.nx * 12 - t * 3) + 1) / 2];
+    case 8: { const col = Math.round(k.x); const pos = ((t * 0.55 + hash(col)) % 1); const d = (k.ny - pos); return [pick(hash(col + 3) * 360), d < 0 && d > -0.35 ? 1 + d / 0.35 : 0]; }
+    case 9: return [hsl(k.nx * 360 - t * 90 * dir), 1];                // rainbow wave
+    case 10: return [hsl(ang - t * 90 * dir), 1];                      // rainbow wheel
+    case 11: return [hsl(t * 30 + k.order * 9), 0.55 + 0.45 * Math.sin(t * 2 + k.order)];
+    case 12: { const v = Math.max(0, Math.sin(t * 1.3 + hash(k.order) * 40)); return [pick(hash(k.order + 9) * 360), v ** 6]; }
+    case 14: { const n = ui.keys.length; const head = (t * 14) % n; const d = ((head - k.order) % n + n) % n; return [pick(k.order * 6), d < 10 ? 1 - d / 10 : 0]; }
     default: {
-      // reactive effects: 4 flash away, 7 ripples, 9 shadow, 12 reaction
-      let a = mode === 9 ? 1 : 0;
+      // reactive effects: 4 ripples, 5 reaction, 6 flash away, 13 shadow
+      let a = mode === 13 ? 1 : 0;
       let col = pick(k.order * 5);
       for (const p of ctx.presses) {
         const age = now - p.t;
         const d = Math.hypot(k.cx - p.k.cx, (k.cy - p.k.cy) * 1.1);
-        if (mode === 12 && p.k === k) a = Math.max(a, 1 - age / 1.2);
-        if (mode === 9 && p.k === k) a = Math.min(a, age / 1.6);
-        if (mode === 4) { const ring = age * 9; a = Math.max(a, Math.max(0, 1 - Math.abs(d - ring) / 1.6) * Math.max(0, 1 - age / 1.6)); }
-        if (mode === 7) { const ring = age * 7; const v = Math.max(0, 1 - Math.abs(d - ring) / 0.9) * Math.max(0, 1 - age / 2.2); if (v > a) { a = v; if (random) col = hsl(p.t * 97); } }
+        if (mode === 5 && p.k === k) a = Math.max(a, 1 - age / 1.2);
+        if (mode === 13 && p.k === k) a = Math.min(a, age / 1.6);
+        if (mode === 6) { const ring = age * 9; a = Math.max(a, Math.max(0, 1 - Math.abs(d - ring) / 1.6) * Math.max(0, 1 - age / 1.6)); }
+        if (mode === 4) { const ring = age * 7; const v = Math.max(0, 1 - Math.abs(d - ring) / 0.9) * Math.max(0, 1 - age / 2.2); if (v > a) { a = v; if (random) col = hsl(p.t * 97); } }
       }
       return [col, Math.max(0, Math.min(1, a))];
     }
@@ -616,11 +628,6 @@ function setupEvents() {
 
   $('save-form').addEventListener('submit', saveProfile);
 
-  $('proto-select').addEventListener('change', async (e) => {
-    const res = await api('POST', '/api/device/protocol', { protocol: e.target.value || null });
-    if (res.status) renderProtocol(res.status);
-    toast(e.target.value ? 'Protokol değiştirildi; bir efekt seçerek deneyin' : 'Protokol otomatik algılanacak');
-  });
 
   // Physical key presses light up the preview (reactive effects)
   const byCode = () => Object.fromEntries(ui.keys.map((k) => [k.code, k]));
@@ -652,7 +659,7 @@ async function init() {
   }
   ui.modes = modes.modes;
   ui.defaultPalette = modes.default_palette;
-  ui.protocols = modes.protocols;
+  ui.customCount = modes.custom_profiles;
   ui.profiles = Array.isArray(profiles) ? profiles : [];
 
   setupEvents();

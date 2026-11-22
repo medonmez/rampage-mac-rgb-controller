@@ -47,9 +47,8 @@ def cmd_status(args):
         print(f"  {st.get('error') or 'Klavye bulunamadı.'}")
         sys.exit(1)
     s = st["state"]
-    proto = f"protokol: {st['protocol'] or 'otomatik'}{' ✓' if st['protocol_confirmed'] else ''}"
     src = "durum klavyeden okundu" if st["readback"] else "klavye okunamıyor, son gönderilen ayar"
-    print(f"{GREEN}✓ Klavye bağlı{RESET} {GREY}({src}; {proto}){RESET}")
+    print(f"{GREEN}✓ Klavye bağlı{RESET} {GREY}({src}){RESET}")
     if s.get("per_key"):
         print(f"  Mod        : {s['mode_title']} (Fn tuşlarıyla seçilmiş özel profil)")
         return
@@ -119,13 +118,8 @@ def cmd_on(args):
     report(drv.turn_on(), "Işıklar açıldı.")
 
 
-def cmd_protocol(args):
-    drv = get_driver()
-    if args.name:
-        drv.set_variant(None if args.name == "auto" else args.name)
-    st = drv.get_status(refresh=False)
-    cur = st["protocol"] or "otomatik"
-    print(f"Protokol: {CYAN}{cur}{RESET} {GREY}({'doğrulandı' if st['protocol_confirmed'] else 'henüz doğrulanmadı'}){RESET}")
+def cmd_custom(args):
+    report(get_driver().apply_custom(args.number), f"Özel tuş profili {args.number} açıldı.")
 
 
 def cmd_ui(args):
@@ -164,9 +158,9 @@ def main():
     sub.add_parser("off", help="Işıkları kapat").set_defaults(func=cmd_off)
     sub.add_parser("on", help="Son modu geri aç").set_defaults(func=cmd_on)
 
-    p = sub.add_parser("protocol", help="Klavye protokol varyantını göster/ayarla")
-    p.add_argument("name", nargs="?", choices=["auto", "kb16", "f11"])
-    p.set_defaults(func=cmd_protocol)
+    p = sub.add_parser("custom", help="Klavyede kayıtlı özel tuş profilini aç (1-5)")
+    p.add_argument("number", type=int, choices=range(1, 6), metavar="1-5")
+    p.set_defaults(func=cmd_custom)
 
     p = sub.add_parser("ui", help="Web arayüzünü başlat")
     p.add_argument("--host", default="127.0.0.1")
