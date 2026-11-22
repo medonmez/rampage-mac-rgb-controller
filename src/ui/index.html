@@ -3,206 +3,125 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Rampage RGB Keyboard Controller (macOS)</title>
+  <title>Rampage RGB</title>
   <link rel="stylesheet" href="style.css">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 </head>
-<body class="theme-dark">
-  <div class="app-container">
-    
-    <!-- Header -->
-    <header class="app-header">
-      <div class="header-brand">
-        <div class="brand-icon">
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <rect x="2" y="4" width="20" height="16" rx="2"/>
-            <path d="M6 8h.01M10 8h.01M14 8h.01M18 8h.01M6 12h.01M10 12h.01M14 12h.01M18 12h.01M7 16h10"/>
-          </svg>
-        </div>
-        <div class="brand-titles">
-          <h1>RAMPAGE <span class="badge-accent">RGB</span></h1>
-          <span class="brand-sub">macOS Controller • SinoWealth 258a:0016</span>
+<body>
+  <div class="app">
+
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true"></div>
+        <div>
+          <h1>Rampage <span>RGB</span></h1>
+          <p class="muted small">SinoWealth 258A:0016 • macOS</p>
         </div>
       </div>
 
-      <div class="header-status">
-        <div id="device-status-badge" class="status-pill status-disconnected">
-          <span class="status-dot"></span>
-          <span id="status-text">Bağlantı Aranıyor...</span>
+      <div class="topbar-actions">
+        <div id="status-pill" class="pill pill-wait" role="status" aria-live="polite">
+          <span class="dot"></span><span id="status-text">Klavye aranıyor…</span>
         </div>
-        
-        <!-- Power button -->
-        <button id="btn-power" class="btn-icon" title="Işıkları Aç/Kapat">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M18.36 6.64a9 9 0 1 1-12.73 0M12 2v10"/>
-          </svg>
+        <button id="btn-power" class="btn btn-power" aria-pressed="true" title="Işıkları aç / kapat">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M18.36 6.64a9 9 0 1 1-12.73 0M12 2v10"/></svg>
+          <span id="power-label">Açık</span>
         </button>
-
-        <!-- Shutdown Application Button -->
-        <button id="btn-shutdown-app" class="btn btn-secondary btn-sm" title="Uygulamayı kapatır, klavye ışıkları açık kalır">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 4px;">
-            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/>
-          </svg>
-          Uygulamayı Kapat
-        </button>
+        <button id="btn-quit" class="btn btn-ghost" title="Sunucuyu kapatır; klavye son ayarda kalır">Kapat</button>
       </div>
     </header>
 
-    <!-- Main Workspace -->
-    <main class="app-main">
-
-      <!-- Section: Interactive Keyboard Canvas -->
-      <section class="card keyboard-card">
-        <div class="card-header">
-          <div class="header-left">
-            <h2>Türkçe Q Klavye Önizleme</h2>
-            <span class="section-desc">Aktif aydınlatma modunu ve canlı LED simülasyonunu görüntüler</span>
-          </div>
-          
-          <div class="group-selector">
-            <span class="selector-label">Tuş Grupları:</span>
-            <div class="group-buttons" id="group-buttons-container">
-              <!-- Dynamically populated from layout -->
-            </div>
-          </div>
-        </div>
-
-        <!-- Keyboard Visual Matrix -->
-        <div class="keyboard-wrapper">
-          <div class="keyboard-chassis" id="keyboard-chassis">
-            <!-- Dynamically rendered keys -->
-          </div>
-        </div>
-
-        <div class="keyboard-footer">
-          <div class="selected-info">
-            <span id="selection-count">105 tuş aktif</span>
-          </div>
-          <div class="keyboard-legend">
-            <span class="legend-item"><span class="legend-box active-glow"></span> Aktif Aydınlatma</span>
-          </div>
-        </div>
-      </section>
-
-      <!-- Section: Lighting Controls & Profiles Grid -->
-      <div class="controls-grid">
-        
-        <!-- Column 1: Confirmed Modes -->
-        <section class="card modes-card">
-          <div class="card-header">
-            <h3>Çalışan Aydınlatma Modları</h3>
-            <span class="badge-count" id="mode-count">3 Mod</span>
-          </div>
-
-          <div class="modes-list" id="modes-list-container">
-            <!-- Dynamically generated mode cards -->
-          </div>
-        </section>
-
-        <!-- Column 2: Parameters (Brightness, Speed) -->
-        <section class="card params-card">
-          <div class="card-header">
-            <h3>Aydınlatma Ayarları</h3>
-          </div>
-
-          <div class="params-content">
-            
-            <!-- Brightness Slider -->
-            <div class="param-group">
-              <div class="param-label">
-                <span>Parlaklık Seviyesi</span>
-                <span id="brightness-val-text" class="param-val">%100 (4/4)</span>
-              </div>
-              <div class="slider-container">
-                <span class="slider-icon">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <circle cx="12" cy="12" r="5"/>
-                    <path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/>
-                  </svg>
-                </span>
-                <input type="range" id="slider-brightness" min="0" max="4" step="1" value="4">
-                <div class="slider-steps">
-                  <span>Kapalı</span>
-                  <span>%25</span>
-                  <span>%50</span>
-                  <span>%75</span>
-                  <span>%100</span>
-                </div>
-              </div>
-            </div>
-
-            <!-- Speed Slider -->
-            <div class="param-group" id="speed-param-group">
-              <div class="param-label">
-                <span>Animasyon Hızı</span>
-                <span id="speed-val-text" class="param-val">Hızlı (3/4)</span>
-              </div>
-              <div class="slider-container">
-                <span class="slider-icon">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
-                  </svg>
-                </span>
-                <input type="range" id="slider-speed" min="0" max="4" step="1" value="3">
-                <div class="slider-steps">
-                  <span>Çok Yavaş</span>
-                  <span>Yavaş</span>
-                  <span>Normal</span>
-                  <span>Hızlı</span>
-                  <span>Çok Hızlı</span>
-                </div>
-              </div>
-            </div>
-
-            <!-- Quick Action Buttons -->
-            <div class="param-group">
-              <div class="param-label">
-                <span>Hızlı Eylemler</span>
-              </div>
-              <div class="toggle-group">
-                <button class="btn btn-secondary btn-sm" id="btn-quick-rainbow">🌈 Gökkuşağı</button>
-                <button class="btn btn-secondary btn-sm" id="btn-quick-red">🔴 Sabit Kırmızı</button>
-                <button class="btn btn-secondary btn-sm" id="btn-quick-snake">🐍 Retro Yılan</button>
-                <button class="btn btn-secondary btn-sm" id="btn-quick-off">⏻ Işıkları Kapat</button>
-              </div>
-            </div>
-
-          </div>
-        </section>
-
-        <!-- Column 3: Profiles Manager -->
-        <section class="card profiles-card">
-          <div class="card-header">
-            <h3>Aydınlatma Profilleri</h3>
-          </div>
-
-          <div class="profiles-list" id="profiles-list-container">
-            <!-- Dynamically populated profile items -->
-          </div>
-        </section>
-
+    <div id="banner" class="banner" hidden>
+      <div>
+        <strong id="banner-title">Klavyeye ulaşılamıyor</strong>
+        <p id="banner-text"></p>
       </div>
-    </main>
-
-    <!-- Shutdown Success Overlay (Appears after closing app) -->
-    <div class="modal-backdrop" id="shutdown-overlay" style="display: none;">
-      <div class="modal-dialog text-center" style="text-align: center;">
-        <div style="font-size: 48px; margin-bottom: 12px;">✅</div>
-        <h3 style="font-size: 20px; margin-bottom: 8px;">Uygulama Kapatıldı</h3>
-        <p style="color: var(--text-secondary); font-size: 14px; line-height: 1.6; margin-bottom: 20px;">
-          Arka plan sunucusu kapatıldı. Klavyeniz <strong>seçtiğiniz son aydınlatma modunda</strong> çalışmaya devam etmektedir. Bu tarayıcı sekmesini kapatabilirsiniz.
-        </p>
-        <button class="btn btn-primary" onclick="window.close();">Sekmeyi Kapat</button>
-      </div>
+      <button id="btn-retry" class="btn btn-ghost">Tekrar dene</button>
     </div>
 
-    <!-- Notification Toast -->
-    <div class="toast-container" id="toast-container"></div>
+    <section class="panel preview">
+      <div class="panel-head">
+        <div>
+          <h2 id="preview-title">Önizleme</h2>
+          <p class="muted small">Klavyedeki efektin yaklaşık canlı simülasyonu. Tuşa basarak tepki efektlerini deneyebilirsiniz.</p>
+        </div>
+        <span id="sync-note" class="chip"></span>
+      </div>
+      <div class="kb-wrap" id="kb-wrap">
+        <div class="kb" id="kb"></div>
+      </div>
+    </section>
 
+    <div class="layout">
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Efektler</h2>
+          <span class="chip" id="mode-count"></span>
+        </div>
+        <div class="modes" id="modes" role="radiogroup" aria-label="Aydınlatma efekti"></div>
+      </section>
+
+      <div class="side">
+        <section class="panel settings">
+          <div class="panel-head">
+            <div>
+              <h2 id="settings-title">Ayarlar</h2>
+              <p class="muted small" id="settings-desc"></p>
+            </div>
+            <span id="apply-state" class="apply-state" aria-live="polite"></span>
+          </div>
+
+          <div class="field" id="field-brightness">
+            <div class="field-label"><span>Parlaklık</span><span class="val" id="brightness-val"></span></div>
+            <div class="seg" id="seg-brightness" role="radiogroup" aria-label="Parlaklık"></div>
+          </div>
+
+          <div class="field" id="field-speed">
+            <div class="field-label"><span>Hız</span><span class="val" id="speed-val"></span></div>
+            <div class="seg" id="seg-speed" role="radiogroup" aria-label="Hız"></div>
+          </div>
+
+          <div class="field" id="field-direction">
+            <div class="field-label"><span>Yön</span></div>
+            <div class="seg seg-2" id="seg-direction" role="radiogroup" aria-label="Yön">
+              <button data-v="0" role="radio">→ Sağa</button>
+              <button data-v="1" role="radio">← Sola</button>
+            </div>
+          </div>
+
+          <div class="field" id="field-color">
+            <div class="field-label"><span>Renk</span><span class="val" id="color-val"></span></div>
+            <div class="swatches" id="swatches" role="radiogroup" aria-label="Renk"></div>
+            <div class="color-edit" id="color-edit">
+              <label for="color-input" class="muted small">Seçili rengi değiştir</label>
+              <input type="color" id="color-input" value="#ff0000">
+              <input type="text" id="color-hex" maxlength="7" spellcheck="false" aria-label="Renk kodu">
+            </div>
+          </div>
+          <p class="muted small" id="no-color-note" hidden>Bu efekt renklerini kendisi belirler.</p>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head">
+            <h2>Profiller</h2>
+          </div>
+          <form class="save-row" id="save-form">
+            <input type="text" id="profile-name" placeholder="Mevcut ayarı kaydet…" maxlength="40" aria-label="Profil adı">
+            <button class="btn btn-primary" type="submit">Kaydet</button>
+          </form>
+          <ul class="profiles" id="profiles"></ul>
+        </section>
+      </div>
+    </div>
   </div>
 
+  <div class="overlay" id="quit-overlay" hidden>
+    <div class="dialog">
+      <h3>Uygulama kapatıldı</h3>
+      <p class="muted">Ayarlar klavyenin kendi belleğinde; ışıklar seçtiğiniz son efektte kalır. Bu sekmeyi kapatabilirsiniz.</p>
+    </div>
+  </div>
+
+  <div class="toasts" id="toasts" aria-live="polite"></div>
   <script src="app.js"></script>
 </body>
 </html>

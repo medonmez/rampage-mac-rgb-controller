@@ -1,24 +1,19 @@
 """
-HTTP Server and REST API for Rampage RGB Controller.
-Pure standard library implementation (Zero external dependencies).
+HTTP server and REST API for the Rampage RGB controller.
+Standard library only.
 """
-import os
-import sys
 import json
 import time
-import signal
-import socket
 import logging
 import threading
 import urllib.parse
-from http import HTTPStatus
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 
+from ..driver.protocol import CUSTOM_PROFILES
 from ..driver import (
-    get_driver, MODES,
-    KEYBOARD_LAYOUT, KEY_GROUPS
+    get_driver, MODES, KEYBOARD_LAYOUT, DEFAULT_PALETTE, COLOR_RANDOM, MAX_LEVEL, resolve_mode,
 )
 
 logger = logging.getLogger("RampageRGB.Server")
@@ -29,268 +24,276 @@ UI_DIR = Path(__file__).resolve().parent.parent / "ui"
 _GLOBAL_HTTPD: Optional[ThreadingHTTPServer] = None
 
 DEFAULT_PROFILES = [
-    {
-        "id": "rainbow_wave",
-        "name": "Gökkuşağı Dalgası",
-        "description": "Canlı ve akıcı tam spektrum gökkuşağı animasyonu",
-        "mode": "rainbow",
-        "brightness": 4,
-        "speed": 3,
-        "color": "#FF0055",
-        "is_default": True
-    },
-    {
-        "id": "red_dragon",
-        "name": "Sabit Kırmızı (Kızıl Ejderha)",
-        "description": "Statik parlak kırmızı gamer aydınlatması",
-        "mode": "static",
-        "color": "#FF0000",
-        "brightness": 4,
-        "speed": 0,
-        "is_default": True
-    },
-    {
-        "id": "retro_snake",
-        "name": "Retro Yılan",
-        "description": "Nostaljik yılan oyunu animasyonu",
-        "mode": "snake",
-        "brightness": 4,
-        "speed": 3,
-        "color": "#00FF00",
-        "is_default": True
-    }
+    {"id": "rainbow_wave", "name": "Gökkuşağı Dalgası", "mode": "rainbow",
+     "brightness": 4, "speed": 2, "color": COLOR_RANDOM, "direction_left": False, "is_default": True},
+    {"id": "red_dragon", "name": "Kızıl Ejderha", "mode": "static",
+     "brightness": 4, "speed": 0, "color": 0, "palette": {"0": "#FF0000"}, "is_default": True},
+    {"id": "retro_snake", "name": "Retro Yılan", "mode": "snake",
+     "brightness": 4, "speed": 3, "color": COLOR_RANDOM, "is_default": True},
+    {"id": "calm_breath", "name": "Sakin Nefes", "mode": "breathing",
+     "brightness": 3, "speed": 1, "color": 0, "palette": {"0": "#00B4FF"}, "is_default": True},
 ]
 
 
 def load_profiles() -> List[Dict[str, Any]]:
-    """Load user profiles from file or create defaults."""
     if not PROFILES_FILE.exists():
         save_profiles(DEFAULT_PROFILES)
-        return DEFAULT_PROFILES
+        return list(DEFAULT_PROFILES)
     try:
         with open(PROFILES_FILE, "r", encoding="utf-8") as f:
-            profiles = json.load(f)
-            return profiles
+            data = json.load(f)
+        return data if isinstance(data, list) else list(DEFAULT_PROFILES)
     except Exception as e:
-        logger.error(f"Error loading profiles: {e}")
-        return DEFAULT_PROFILES
+        logger.error(f"Profiller okunamadı: {e}")
+        return list(DEFAULT_PROFILES)
 
 
 def save_profiles(profiles: List[Dict[str, Any]]) -> bool:
-    """Save profiles to JSON file."""
     try:
-        with open(PROFILES_FILE, "w", encoding="utf-8") as f:
+        tmp = PROFILES_FILE.with_suffix(".tmp")
+        with open(tmp, "w", encoding="utf-8") as f:
             json.dump(profiles, f, ensure_ascii=False, indent=2)
+        tmp.replace(PROFILES_FILE)
         return True
     except Exception as e:
-        logger.error(f"Error saving profiles: {e}")
+        logger.error(f"Profiller kaydedilemedi: {e}")
         return False
 
 
-class RampageAPIHandler(SimpleHTTPRequestHandler):
-    """Handles REST API requests and serves the Web UI."""
+def _opt_level(body: Dict[str, Any], key: str) -> Optional[int]:
+    if body.get(key) is None:
+        return None
+    v = int(body[key])
+    if not 0 <= v <= MAX_LEVEL:
+        raise ValueError(f"{key} 0-{MAX_LEVEL} arasında olmalı")
+    return v
 
+
+def _palette_arg(value: Any) -> Optional[Dict[int, str]]:
+    if not value:
+        return None
+    if isinstance(value, list):
+        return {i: c for i, c in enumerate(value) if c}
+    if isinstance(value, dict):
+        return {int(k): v for k, v in value.items() if v}
+    raise ValueError("palette liste veya sözlük olmalı")
+
+
+NAMED_COLORS = {
+    "red": "#FF0000", "kırmızı": "#FF0000", "green": "#00FF00", "yeşil": "#00FF00",
+    "blue": "#0000FF", "mavi": "#0000FF", "white": "#FFFFFF", "beyaz": "#FFFFFF",
+    "cyan": "#00FFFF", "yellow": "#FFFF00", "sarı": "#FFFF00",
+    "magenta": "#FF00FF", "purple": "#A020F0", "mor": "#A020F0", "orange": "#FF8000", "turuncu": "#FF8000",
+}
+
+
+def _color_arg(color: Any, palette: Any):
+    """Accept a preset index (0-7), 'random'/'rainbow', a colour name or '#RRGGBB'."""
+    palette = _palette_arg(palette)
+    if color is None or isinstance(color, bool):
+        return None, palette
+    if isinstance(color, (int, float)) or str(color).isdigit():
+        value = int(color)
+        if not 0 <= value <= COLOR_RANDOM:
+            raise ValueError("color 0-7 arasında olmalı")
+        return value, palette
+    text = str(color).strip().lower()
+    if text in ("random", "rainbow", "rastgele", "renkli"):
+        return COLOR_RANDOM, palette
+    hex_value = NAMED_COLORS.get(text, text if text.startswith("#") else None)
+    if not hex_value:
+        raise ValueError(f"Bilinmeyen renk: {color}")
+    return 0, {**(palette or {}), 0: hex_value}
+
+
+def _mode_title(profile: Dict[str, Any]) -> str:
+    mode = str(profile.get("mode", "")).lower()
+    if mode in ("custom", "custom_preset"):
+        return f"Özel tuş profili {profile.get('profile') or profile.get('custom_preset') or 1}"
+    try:
+        return MODES[resolve_mode(mode)]["title"]
+    except ValueError:
+        return mode
+
+
+def apply_settings(body: Dict[str, Any]) -> Dict[str, Any]:
+    """Validate a settings body and send it to the keyboard."""
+    if str(body.get("mode", "")).lower() in ("custom", "custom_preset"):
+        return get_driver().apply_custom(int(body.get("profile") or body.get("custom_preset") or 1))
+    mode_id = resolve_mode(body.get("mode"))
+    color, palette = _color_arg(body.get("color"), body.get("palette"))
+    direction = body.get("direction_left")
+    return get_driver().apply(
+        mode_id,
+        speed=_opt_level(body, "speed"),
+        brightness=_opt_level(body, "brightness"),
+        color=color,
+        direction_left=None if direction is None else bool(direction),
+        palette=palette,
+    )
+
+
+class RampageAPIHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(UI_DIR), **kwargs)
 
-    def _set_json_headers(self, status: int = 200):
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
-        self.send_header("Cache-Control", "no-store, no-cache, must-revalidate")
-        self.end_headers()
-
-    def do_OPTIONS(self):
-        self._set_json_headers(200)
-
-    def _read_json_body(self) -> Optional[Dict[str, Any]]:
-        content_length = int(self.headers.get("Content-Length", 0))
-        if content_length == 0:
-            return {}
-        try:
-            body_bytes = self.rfile.read(content_length)
-            return json.loads(body_bytes.decode("utf-8"))
-        except Exception as e:
-            logger.error(f"Error parsing JSON request: {e}")
-            return None
+    def end_headers(self):
+        self.send_header("Cache-Control", "no-store")
+        super().end_headers()
 
     def _send_json(self, data: Any, status: int = 200):
-        self._set_json_headers(status)
-        self.wfile.write(json.dumps(data, ensure_ascii=False).encode("utf-8"))
+        payload = json.dumps(data, ensure_ascii=False).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
 
+    def _read_json_body(self) -> Optional[Dict[str, Any]]:
+        length = int(self.headers.get("Content-Length", 0) or 0)
+        if not length:
+            return {}
+        try:
+            data = json.loads(self.rfile.read(length).decode("utf-8"))
+            return data if isinstance(data, dict) else None
+        except Exception:
+            return None
+
+    def _result(self, result: Dict[str, Any]):
+        drv = get_driver()
+        status = drv.get_status(refresh=False)
+        self._send_json({**result, "status": status}, 200 if result.get("success") else 503)
+
+    # ------------------------------------------------------------------
     def do_GET(self):
-        parsed = urllib.parse.urlparse(self.path)
-        path = parsed.path
+        path = urllib.parse.urlparse(self.path).path
 
         if path == "/api/device/status":
-            drv = get_driver()
-            status = drv.get_status()
-            self._send_json(status)
-            return
-
-        if path == "/api/device/modes":
-            self._send_json(list(MODES.values()))
-            return
-
-        if path == "/api/device/layout":
+            self._send_json(get_driver().get_status())
+        elif path == "/api/device/modes":
             self._send_json({
-                "rows": KEYBOARD_LAYOUT,
-                "groups": KEY_GROUPS
+                "modes": list(MODES.values()),
+                "default_palette": DEFAULT_PALETTE,
+                "color_random": COLOR_RANDOM,
+                "max_level": MAX_LEVEL,
+                "custom_profiles": CUSTOM_PROFILES,
             })
-            return
-
-        if path == "/api/profiles":
-            profiles = load_profiles()
-            self._send_json(profiles)
-            return
-
-        return super().do_GET()
+        elif path == "/api/device/layout":
+            self._send_json({"rows": KEYBOARD_LAYOUT})
+        elif path == "/api/profiles":
+            self._send_json([{**p, "mode_title": _mode_title(p)} for p in load_profiles()])
+        else:
+            super().do_GET()
 
     def do_POST(self):
-        parsed = urllib.parse.urlparse(self.path)
-        path = parsed.path
+        path = urllib.parse.urlparse(self.path).path
         body = self._read_json_body()
-
         if body is None:
-            self._send_json({"error": "Invalid JSON body"}, status=400)
+            self._send_json({"success": False, "error": "Geçersiz JSON"}, 400)
             return
 
         drv = get_driver()
+        try:
+            if path in ("/api/device/apply", "/api/device/mode"):
+                self._result(apply_settings(body))
+            elif path == "/api/device/static-color":
+                self._result(drv.set_static_color(body.get("color", "#FF0000"), _opt_level(body, "brightness")))
+            elif path == "/api/device/off":
+                self._result(drv.turn_off())
+            elif path == "/api/device/on":
+                self._result(drv.turn_on())
+            elif path == "/api/device/custom":
+                self._result(drv.apply_custom(int(body.get("profile", 1))))
+            elif path == "/api/device/reconnect":
+                ok = drv.connect()
+                self._result({"success": ok, "error": None if ok else drv.error})
+            elif path == "/api/profiles":
+                self._save_profile(body)
+            elif path == "/api/profiles/apply":
+                target = next((p for p in load_profiles() if p.get("id") == body.get("id")), None)
+                if not target:
+                    self._send_json({"success": False, "error": "Profil bulunamadı"}, 404)
+                else:
+                    self._result(apply_settings(target))
+            elif path == "/api/server/shutdown":
+                self._send_json({"success": True})
+                threading.Thread(target=_shutdown_soon, daemon=True).start()
+            else:
+                self._send_json({"success": False, "error": "Bulunamadı"}, 404)
+        except ValueError as e:
+            self._send_json({"success": False, "error": str(e)}, 400)
+        except Exception as e:  # keep the server alive no matter what
+            logger.exception("İstek işlenemedi")
+            self._send_json({"success": False, "error": f"Beklenmeyen hata: {e}"}, 500)
 
-        # Clean Graceful Shutdown Endpoint
-        if path == "/api/server/shutdown":
-            self._send_json({
-                "success": True,
-                "message": "Uygulama kapatıldı. Klavyeniz mevcut aydınlatma modunda kalacaktır."
-            })
-
-            def _clean_shutdown():
-                time.sleep(0.2)
-                global _GLOBAL_HTTPD
-                if _GLOBAL_HTTPD:
-                    _GLOBAL_HTTPD.shutdown()
-
-            threading.Thread(target=_clean_shutdown, daemon=True).start()
-            return
-
-        if path == "/api/device/mode":
-            mode = body.get("mode", 1)
-            speed = body.get("speed", 2)
-            brightness = body.get("brightness", 4)
-
-            success = drv.set_effect(mode=mode, speed=speed, brightness=brightness)
-            self._send_json({
-                "success": success,
-                "state": drv.get_status()["state"]
-            })
-            return
-
-        if path == "/api/device/static-color":
-            brightness = body.get("brightness", 4)
-            success = drv.set_static_color(color="red", brightness=brightness)
-            self._send_json({
-                "success": success,
-                "state": drv.get_status()["state"]
-            })
-            return
-
-        if path == "/api/device/off":
-            success = drv.turn_off()
-            self._send_json({
-                "success": success,
-                "state": drv.get_status()["state"]
-            })
-            return
-
-        if path == "/api/profiles":
-            profiles = load_profiles()
-            name = body.get("name", "Yeni Profil")
-            profile_id = body.get("id") or f"profile_{int(time.time())}"
-            new_profile = {
-                "id": profile_id,
-                "name": name,
-                "description": body.get("description", ""),
-                "mode": body.get("mode", "rainbow"),
-                "brightness": body.get("brightness", 4),
-                "speed": body.get("speed", 2),
-                "is_default": False
-            }
-
-            updated = False
-            for idx, p in enumerate(profiles):
-                if p["id"] == profile_id:
-                    profiles[idx] = new_profile
-                    updated = True
-                    break
-            if not updated:
-                profiles.append(new_profile)
-
-            save_profiles(profiles)
-            self._send_json({"success": True, "profile": new_profile, "profiles": profiles})
-            return
-
-        if path == "/api/profiles/apply":
-            profile_id = body.get("id")
-            profiles = load_profiles()
-            target = next((p for p in profiles if p["id"] == profile_id), None)
-            if not target:
-                self._send_json({"error": "Profile not found"}, status=404)
-                return
-
-            mode = target.get("mode", "rainbow")
-            brightness = target.get("brightness", 4)
-            speed = target.get("speed", 2)
-
-            success = drv.set_effect(mode=mode, speed=speed, brightness=brightness)
-            self._send_json({
-                "success": success,
-                "applied_profile": target,
-                "state": drv.get_status()["state"]
-            })
-            return
-
-        self._send_json({"error": "Endpoint not found"}, status=404)
+    def _save_profile(self, body: Dict[str, Any]):
+        name = str(body.get("name", "")).strip()
+        if not name:
+            raise ValueError("Profil adı boş olamaz")
+        mode_id = resolve_mode(body.get("mode"))
+        profile = {
+            "id": body.get("id") or f"profile_{int(time.time() * 1000)}",
+            "name": name[:40],
+            "mode": MODES[mode_id]["name"],
+            "brightness": _opt_level(body, "brightness"),
+            "speed": _opt_level(body, "speed"),
+            "color": body.get("color"),
+            "direction_left": bool(body.get("direction_left", False)),
+            "palette": body.get("palette"),
+            "is_default": False,
+        }
+        profiles = load_profiles()
+        for i, p in enumerate(profiles):
+            if p.get("id") == profile["id"]:
+                profiles[i] = profile
+                break
+        else:
+            profiles.append(profile)
+        save_profiles(profiles)
+        self._send_json({"success": True, "profile": profile, "profiles": profiles})
 
     def do_DELETE(self):
         parsed = urllib.parse.urlparse(self.path)
-        path = parsed.path
-        query = urllib.parse.parse_qs(parsed.query)
-
-        if path == "/api/profiles":
-            profile_id = query.get("id", [None])[0]
-            if not profile_id:
-                self._send_json({"error": "Missing profile id"}, status=400)
-                return
-
-            profiles = load_profiles()
-            filtered = [p for p in profiles if p["id"] != profile_id]
-            if len(filtered) == len(profiles):
-                self._send_json({"error": "Profile not found"}, status=404)
-                return
-
-            save_profiles(filtered)
-            self._send_json({"success": True, "profiles": filtered})
+        if parsed.path != "/api/profiles":
+            self._send_json({"success": False, "error": "Bulunamadı"}, 404)
             return
-
-        self._send_json({"error": "Endpoint not found"}, status=404)
+        profile_id = urllib.parse.parse_qs(parsed.query).get("id", [None])[0]
+        profiles = load_profiles()
+        filtered = [p for p in profiles if p.get("id") != profile_id]
+        if len(filtered) == len(profiles):
+            self._send_json({"success": False, "error": "Profil bulunamadı"}, 404)
+            return
+        save_profiles(filtered)
+        self._send_json({"success": True, "profiles": filtered})
 
     def log_message(self, format, *args):
         pass
 
 
+def _shutdown_soon():
+    time.sleep(0.2)
+    if _GLOBAL_HTTPD:
+        _GLOBAL_HTTPD.shutdown()
+
+
 def run_server(host: str = "127.0.0.1", port: int = 8765, open_browser: bool = False):
-    """Start the HTTP server."""
     global _GLOBAL_HTTPD
-    server_address = (host, port)
     ThreadingHTTPServer.allow_reuse_address = True
-    httpd = ThreadingHTTPServer(server_address, RampageAPIHandler)
+    try:
+        httpd = ThreadingHTTPServer((host, port), RampageAPIHandler)
+    except OSError:
+        url = f"http://{host}:{port}"
+        print(f"Port {port} kullanımda; uygulama zaten açık olabilir: {url}")
+        if open_browser:
+            import webbrowser
+            webbrowser.open(url)
+        return
     _GLOBAL_HTTPD = httpd
-    
+
     url = f"http://{host}:{port}"
-    print(f"🚀 Rampage RGB Controller Web Sunucusu Başlatıldı: {url}")
-    print("Durdurmak için arayüzdeki 'Uygulamayı Kapat' butonunu kullanabilir veya Ctrl + C yapabilirsiniz.")
+    print(f"🚀 Rampage RGB arayüzü: {url}")
+    print("Durdurmak için arayüzdeki 'Kapat' düğmesini veya Ctrl+C'yi kullanın.")
+    get_driver()  # connect early so the first page load is fast
 
     if open_browser:
         import webbrowser
@@ -303,8 +306,8 @@ def run_server(host: str = "127.0.0.1", port: int = 8765, open_browser: bool = F
     finally:
         httpd.server_close()
         get_driver().close()
-        print("\nSunucu kapatıldı. Klavyenizin ışık ayarları korundu.")
+        print("\nSunucu kapatıldı. Klavyenin ışık ayarları klavyede kayıtlı kalır.")
 
 
 if __name__ == "__main__":
-    run_server(port=8765)
+    run_server()
