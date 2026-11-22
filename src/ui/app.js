@@ -644,9 +644,10 @@ async function init() {
     api('GET', '/api/device/status'),
     api('GET', '/api/profiles'),
   ]);
-  if (modes.offline) {
-    $('status-text').textContent = 'Sunucu kapalı';
-    $('status-pill').className = 'pill pill-err';
+  if (!Array.isArray(modes.modes) || !Array.isArray(layout.rows) || status.offline) {
+    $('status-text').textContent = 'Sunucuya bağlanılıyor…';
+    $('status-pill').className = 'pill pill-wait';
+    setTimeout(init, 1500);
     return;
   }
   ui.modes = modes.modes;
