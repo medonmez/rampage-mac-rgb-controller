@@ -1,207 +1,183 @@
 #!/usr/bin/env python3
 """
-Rampage RGB (SinoWealth 258A:0016) Keyboard Controller CLI for macOS.
-Focused on verified working hardware modes.
+Rampage RGB (SinoWealth 258A:0016) keyboard controller CLI for macOS.
 """
 import sys
 import argparse
 from pathlib import Path
 
-# Add project root to sys.path
 PROJECT_ROOT = Path(__file__).resolve().parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.driver import (
-    get_driver, MODES, MODE_BY_NAME, VID, PID
+from src.driver import get_driver, MODES, COLOR_RANDOM, resolve_mode  # noqa: E402
+from src.server.app import run_server, load_profiles, apply_settings  # noqa: E402
+
+GREEN, RED, YELLOW, CYAN, GREY, BOLD, RESET = (
+    "\033[1;32m", "\033[1;31m", "\033[1;33m", "\033[1;36m", "\033[90m", "\033[1m", "\033[0m"
 )
-from src.server.app import run_server, load_profiles
+SPEED_LABELS = ["Çok yavaş", "Yavaş", "Normal", "Hızlı", "Çok hızlı"]
 
 
-def print_banner():
-    print("""
-\033[1;35m════════════════════════════════════════════════════════════════════\033[0m
-\033[1;37m   RAMPAGE RGB CONTROLLER (macOS) \033[0m• \033[1;36mSinoWealth 258A:0016\033[0m
-\033[1;35m════════════════════════════════════════════════════════════════════\033[0m""")
+def banner():
+    print(f"{BOLD}RAMPAGE RGB{RESET} {GREY}• macOS • SinoWealth 258A:0016{RESET}")
+
+
+def fail(msg: str, code: int = 1):
+    print(f"{RED}✗ {msg}{RESET}")
+    sys.exit(code)
+
+
+def report(result, ok_msg: str):
+    if not result.get("success"):
+        fail(result.get("error") or "Komut gönderilemedi.")
+    note = ""
+    if result.get("verified") is True:
+        note = f" {GREY}(klavyeden doğrulandı){RESET}"
+    elif result.get("verified") is False:
+        note = f" {YELLOW}(gönderildi, doğrulanamadı){RESET}"
+    print(f"{GREEN}✓ {ok_msg}{RESET}{note}")
 
 
 def cmd_status(args):
-    drv = get_driver()
-    status = drv.get_status()
-    print_banner()
-    
-    if status["connected"]:
-        print("\033[1;32m[✓] DURUM: Klavye Bağlı ve Hazır!\033[0m")
-        print(f"  • Cihaz Adı      : {status['device']['name']}")
-        print(f"  • USB VID / PID  : {status['device']['vendor_id']} : {status['device']['product_id']}")
-        print(f"  • Arayüz         : {status['device']['interface']}")
-        print("\n\033[1;33m[Aktif Aydınlatma Ayarları]\033[0m")
-        s = status["state"]
-        print(f"  • Mod            : #{s['mode']} - {s.get('mode_title', s['mode_name'])}")
-        print(f"  • Parlaklık      : Seviye {s['brightness']}/4 (%{s['brightness']*25})")
-        print(f"  • Hız            : Seviye {s['speed']}/4")
-    else:
-        print("\033[1;31m[✗] DURUM: Rampage (258A:0016) klavye bulunamadı veya bağlı değil!\033[0m")
-        print("  Lütfen klavyenizin USB kablosunu kontrol edin.")
+    banner()
+    st = get_driver().get_status()
+    if not st["connected"]:
+        print(f"{RED}✗ Bağlı değil{RESET}")
+        print(f"  {st.get('error') or 'Klavye bulunamadı.'}")
+        sys.exit(1)
+    s = st["state"]
+    proto = f"protokol: {st['protocol'] or 'otomatik'}{' ✓' if st['protocol_confirmed'] else ''}"
+    src = "durum klavyeden okundu" if st["readback"] else "klavye okunamıyor, son gönderilen ayar"
+    print(f"{GREEN}✓ Klavye bağlı{RESET} {GREY}({src}; {proto}){RESET}")
+    if s.get("per_key"):
+        print(f"  Mod        : {s['mode_title']} (Fn tuşlarıyla seçilmiş özel profil)")
+        return
+    print(f"  Mod        : #{s['mode']} {s['mode_title']}")
+    if s["mode"]:
+        print(f"  Parlaklık  : {s['brightness']}/4")
+        print(f"  Hız        : {s['speed']}/4 ({SPEED_LABELS[s['speed']]})")
+        color = "Renkli (rastgele)" if s["color"] == COLOR_RANDOM else f"Renk {s['color'] + 1}: {s['palette'][s['color']]}"
+        print(f"  Renk       : {color}")
+        print(f"  Yön        : {'Sola' if s['direction_left'] else 'Sağa'}")
 
 
 def cmd_list_modes(args):
-    print_banner()
-    print("\n\033[1;33m[Desteklenen ve Çalışan Aydınlatma Modları]\033[0m\n")
-    for m_id, m_info in MODES.items():
-        name_str = f"\033[1;36m{m_info['name']:<18}\033[0m"
-        title_str = m_info["title"]
-        features = []
-        if m_info["has_speed"]: features.append("Hız Ayarlı")
-        if m_info["has_brightness"]: features.append("Parlaklık Ayarlı")
-        feat_str = f"[\033[90m{', '.join(features)}\033[0m]" if features else ""
-        print(f"  ID {m_id:>2} : {name_str} - {title_str:<38} {feat_str}")
+    banner()
+    for mid, m in MODES.items():
+        feats = [n for f, n in (("has_speed", "hız"), ("has_color", "renk"), ("has_direction", "yön")) if m[f]]
+        print(f"  {mid:>2}  {CYAN}{m['name']:<14}{RESET} {m['title']:<20} {GREY}{', '.join(feats)}{RESET}")
 
 
 def cmd_list_profiles(args):
-    profiles = load_profiles()
-    print_banner()
-    print("\n\033[1;33m[Kayıtlı Aydınlatma Profilleri]\033[0m\n")
-    for idx, p in enumerate(profiles, 1):
-        default_tag = " \033[90m(Varsayılan)\033[0m" if p.get("is_default") else ""
-        print(f"  {idx}. \033[1;36m{p['name']}\033[0m{default_tag}")
-        print(f"     Mod: {p.get('mode')} | Parlaklık: %{p.get('brightness', 4)*25} | Hız: {p.get('speed', 2)}/4")
-        if p.get("description"):
-            print(f"     Açıklama: {p.get('description')}")
-        print()
+    banner()
+    for p in load_profiles():
+        tag = f" {GREY}(varsayılan){RESET}" if p.get("is_default") else ""
+        print(f"  {CYAN}{p['id']}{RESET}  {p['name']}{tag}  {GREY}mod: {p.get('mode')}{RESET}")
+
+
+def _color_arg(value):
+    if value is None:
+        return None, None
+    if value.lower() in ("random", "rastgele", "renkli"):
+        return COLOR_RANDOM, None
+    if value.isdigit() and 1 <= int(value) <= 7:
+        return int(value) - 1, None
+    return 0, {"0": value}
 
 
 def cmd_mode(args):
-    drv = get_driver()
-    if not drv.is_connected():
-        print("\033[1;31m[Hata] Klavye bağlı değil!\033[0m")
-        sys.exit(1)
-
-    mode_val = args.mode
-    success = drv.set_effect(mode=mode_val, speed=args.speed, brightness=args.brightness)
-    if success:
-        mode_id = MODE_BY_NAME.get(mode_val.lower(), 1) if not str(mode_val).isdigit() else int(mode_val)
-        m_info = MODES.get(mode_id, MODES[1])
-        print(f"\033[1;32m[✓] Mod uygulandı: {m_info['title']}\033[0m")
-        print(f"    Parlaklık: %{args.brightness*25} | Hız: {args.speed}/4")
-    else:
-        print("\033[1;31m[Hata] Mod gönderilirken donanım hatası oluştu.\033[0m")
+    try:
+        mode_id = resolve_mode(args.mode)
+    except ValueError as e:
+        fail(str(e))
+    color, palette = _color_arg(args.color)
+    body = {"mode": mode_id, "speed": args.speed, "brightness": args.brightness, "color": color, "palette": palette}
+    if args.left or args.right:
+        body["direction_left"] = bool(args.left)
+    report(apply_settings(body), f"Mod uygulandı: {MODES[mode_id]['title']}")
 
 
 def cmd_static(args):
-    drv = get_driver()
-    if not drv.is_connected():
-        print("\033[1;31m[Hata] Klavye bağlı değil!\033[0m")
-        sys.exit(1)
-
-    success = drv.set_static_color(color="red", brightness=args.brightness)
-    if success:
-        print(f"\033[1;32m[✓] Sabit Kırmızı mod uygulandı (Parlaklık: %{args.brightness*25})\033[0m")
-    else:
-        print("\033[1;31m[Hata] Komut gönderilemedi.\033[0m")
+    report(get_driver().set_static_color(args.color, args.brightness), f"Sabit renk: {args.color}")
 
 
 def cmd_profile(args):
-    drv = get_driver()
-    if not drv.is_connected():
-        print("\033[1;31m[Hata] Klavye bağlı değil!\033[0m")
-        sys.exit(1)
-
-    profiles = load_profiles()
-    query = args.name.lower()
-    target = None
-    for p in profiles:
-        if p.get("id", "").lower() == query or p.get("name", "").lower() == query:
-            target = p
-            break
-
+    q = args.name.lower()
+    target = next((p for p in load_profiles() if p.get("id", "").lower() == q or p.get("name", "").lower() == q), None)
     if not target:
-        print(f"\033[1;31m[Hata] '{args.name}' adında bir profil bulunamadı.\033[0m")
-        sys.exit(1)
-
-    mode = target.get("mode", "rainbow")
-    brightness = target.get("brightness", 4)
-    speed = target.get("speed", 2)
-
-    success = drv.set_effect(mode=mode, speed=speed, brightness=brightness)
-    if success:
-        print(f"\033[1;32m[✓] '{target['name']}' profili başarıyla klavyeye uygulandı!\033[0m")
-    else:
-        print("\033[1;31m[Hata] Profil uygulanamadı.\033[0m")
+        fail(f"'{args.name}' adında profil yok. 'list-profiles' ile bakabilirsiniz.")
+    report(apply_settings(target), f"Profil uygulandı: {target['name']}")
 
 
 def cmd_off(args):
-    drv = get_driver()
-    if not drv.is_connected():
-        print("\033[1;31m[Hata] Klavye bağlı değil!\033[0m")
-        sys.exit(1)
+    report(get_driver().turn_off(), "Işıklar kapatıldı.")
 
-    success = drv.turn_off()
-    if success:
-        print("\033[1;32m[✓] Klavye aydınlatması kapatıldı (Off).\033[0m")
-    else:
-        print("\033[1;31m[Hata] Komut gönderilemedi.\033[0m")
+
+def cmd_on(args):
+    drv = get_driver()
+    report(drv.turn_on(), "Işıklar açıldı.")
+
+
+def cmd_protocol(args):
+    drv = get_driver()
+    if args.name:
+        drv.set_variant(None if args.name == "auto" else args.name)
+    st = drv.get_status(refresh=False)
+    cur = st["protocol"] or "otomatik"
+    print(f"Protokol: {CYAN}{cur}{RESET} {GREY}({'doğrulandı' if st['protocol_confirmed'] else 'henüz doğrulanmadı'}){RESET}")
 
 
 def cmd_ui(args):
-    print_banner()
-    open_browser = not args.no_browser
-    run_server(host=args.host, port=args.port, open_browser=open_browser)
+    banner()
+    run_server(host=args.host, port=args.port, open_browser=not args.no_browser)
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Rampage (SinoWealth 258A:0016) RGB Keyboard Controller for macOS",
-        formatter_class=argparse.RawDescriptionHelpFormatter
-    )
+    parser = argparse.ArgumentParser(description="Rampage (SinoWealth 258A:0016) RGB klavye kontrolü")
+    sub = parser.add_subparsers(dest="command")
+    level = dict(type=int, choices=range(5), metavar="0-4")
 
-    subparsers = parser.add_subparsers(dest="command", help="Kullanılabilir komutlar")
+    sub.add_parser("status", help="Bağlantı ve aktif ayarları göster").set_defaults(func=cmd_status)
+    sub.add_parser("list-modes", help="Tüm modları listele").set_defaults(func=cmd_list_modes)
+    sub.add_parser("list-profiles", help="Kayıtlı profilleri listele").set_defaults(func=cmd_list_profiles)
 
-    # status
-    p_status = subparsers.add_parser("status", help="Klavye bağlantı ve aydınlatma durumunu gösterir")
-    p_status.set_defaults(func=cmd_status)
+    p = sub.add_parser("mode", help="Mod uygula (ör. rainbow, snake, breathing, 3)")
+    p.add_argument("mode")
+    p.add_argument("--speed", "-s", **level)
+    p.add_argument("--brightness", "-b", **level)
+    p.add_argument("--color", "-c", help="'#RRGGBB', 1-7 (palet yuvası) veya 'random'")
+    d = p.add_mutually_exclusive_group()
+    d.add_argument("--left", action="store_true", help="Sola doğru")
+    d.add_argument("--right", action="store_true", help="Sağa doğru")
+    p.set_defaults(func=cmd_mode)
 
-    # list-modes
-    p_modes = subparsers.add_parser("list-modes", help="Desteklenen aydınlatma modlarını listeler")
-    p_modes.set_defaults(func=cmd_list_modes)
+    p = sub.add_parser("static", help="Tüm tuşlar tek renk")
+    p.add_argument("color", nargs="?", default="#FF0000", help="#RRGGBB")
+    p.add_argument("--brightness", "-b", **level)
+    p.set_defaults(func=cmd_static)
 
-    # list-profiles
-    p_profiles = subparsers.add_parser("list-profiles", help="Kayıtlı profilleri listeler")
-    p_profiles.set_defaults(func=cmd_list_profiles)
+    p = sub.add_parser("profile", help="Kayıtlı profili uygula")
+    p.add_argument("name")
+    p.set_defaults(func=cmd_profile)
 
-    # mode
-    p_mode = subparsers.add_parser("mode", help="Efekt modu ayarlar (rainbow, static, snake)")
-    p_mode.add_argument("mode", help="Mod adı (rainbow, static, snake, off)")
-    p_mode.add_argument("--speed", "-s", type=int, default=2, choices=[0, 1, 2, 3, 4], help="Hız (0-4)")
-    p_mode.add_argument("--brightness", "-b", type=int, default=4, choices=[0, 1, 2, 3, 4], help="Parlaklık (0-4)")
-    p_mode.set_defaults(func=cmd_mode)
+    sub.add_parser("off", help="Işıkları kapat").set_defaults(func=cmd_off)
+    sub.add_parser("on", help="Son modu geri aç").set_defaults(func=cmd_on)
 
-    # static
-    p_static = subparsers.add_parser("static", help="Sabit Kırmızı modu ayarlar")
-    p_static.add_argument("--brightness", "-b", type=int, default=4, choices=[0, 1, 2, 3, 4], help="Parlaklık (0-4)")
-    p_static.set_defaults(func=cmd_static)
+    p = sub.add_parser("protocol", help="Klavye protokol varyantını göster/ayarla")
+    p.add_argument("name", nargs="?", choices=["auto", "kb16", "f11"])
+    p.set_defaults(func=cmd_protocol)
 
-    # profile
-    p_profile = subparsers.add_parser("profile", help="Kayıtlı bir profili uygular")
-    p_profile.add_argument("name", help="Profil adı veya ID'si")
-    p_profile.set_defaults(func=cmd_profile)
-
-    # off
-    p_off = subparsers.add_parser("off", help="Klavye aydınlatmasını kapatır")
-    p_off.set_defaults(func=cmd_off)
-
-    # ui
-    p_ui = subparsers.add_parser("ui", help="Web arayüzünü ve sunucusunu başlatır")
-    p_ui.add_argument("--host", default="127.0.0.1", help="Sunucu adresi (Varsayılan: 127.0.0.1)")
-    p_ui.add_argument("--port", type=int, default=8765, help="Port (Varsayılan: 8765)")
-    p_ui.add_argument("--no-browser", action="store_true", help="Tarayıcıyı otomatik açma")
-    p_ui.set_defaults(func=cmd_ui)
+    p = sub.add_parser("ui", help="Web arayüzünü başlat")
+    p.add_argument("--host", default="127.0.0.1")
+    p.add_argument("--port", type=int, default=8765)
+    p.add_argument("--no-browser", action="store_true")
+    p.set_defaults(func=cmd_ui)
 
     args = parser.parse_args()
     if hasattr(args, "func"):
         args.func(args)
     else:
-        cmd_status(args)
         parser.print_help()
 
 

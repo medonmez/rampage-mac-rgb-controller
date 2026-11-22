@@ -1,443 +1,666 @@
-/**
- * Rampage RGB Keyboard Controller - Web App Logic
- */
+/* Rampage RGB – web UI */
+'use strict';
 
-// Application State
-const state = {
-  connected: false,
-  deviceInfo: null,
-  activeMode: 1,
-  brightness: 4,
-  speed: 3,
-  powerOn: true,
-  layout: null,
-  groups: {},
+const RANDOM = 7;
+const SPEED_LABELS = ['Çok yavaş', 'Yavaş', 'Normal', 'Hızlı', 'Çok hızlı'];
+const BRIGHT_LABELS = ['Kapalı', '%25', '%50', '%75', '%100'];
+const MODE_SWATCH = {
+  1: '#ff2e63', 2: 'radial-gradient(#2ea8ff, #0b2a40)', 3: 'linear-gradient(90deg,#ff2e63,#ffb02e,#2fd27f,#2ea8ff,#a62eff)',
+  4: 'radial-gradient(circle,#fff 0 15%,#ff2e63 40%,#2a0b14)', 5: 'linear-gradient(#0b2a40,#2ea8ff)', 6: 'conic-gradient(#ff2e63,#ffb02e,#2fd27f,#2ea8ff,#a62eff,#ff2e63)',
+  7: 'repeating-radial-gradient(circle,#2ea8ff 0 3px,#0b1a2a 3px 7px)', 8: 'radial-gradient(circle at 30% 30%,#fff 0 8%,transparent 12%),radial-gradient(circle at 70% 65%,#ffe680 0 8%,transparent 12%),#141a2b',
+  9: 'linear-gradient(135deg,#a62eff,#1a0b2a)', 10: 'linear-gradient(90deg,#14301f 0 30%,#2fd27f 30% 70%,#14301f 70%)', 11: 'linear-gradient(135deg,#ff2ed1,#2ee6ff)',
+  12: 'radial-gradient(circle,#ffb02e 0 30%,#2a1a0b 60%)', 13: 'repeating-linear-gradient(90deg,#2ea8ff 0 4px,#0b1a2a 4px 9px)', 14: 'linear-gradient(90deg,#0b2a1a 0 40%,#2fd27f 45% 55%,#0b2a1a 60%)',
+  15: 'conic-gradient(#ffb02e 0 45deg,#1a140b 45deg 90deg,#ffb02e 90deg 135deg,#1a140b 135deg 180deg,#ffb02e 180deg 225deg,#1a140b 225deg 270deg,#ffb02e 270deg 315deg,#1a140b 315deg)',
+  16: 'linear-gradient(#2ee6ff,#2ea8ff,#a62eff,#ff2e63)', 17: 'radial-gradient(circle,#ffe0f0,#ff2e9a 45%,#3a0b24)', 18: 'conic-gradient(from 90deg,#2ea8ff,#a62eff,#ff2e63,#2ea8ff)',
+  19: 'linear-gradient(90deg,#ff2e63 0 20%,#1a0b10 20% 80%,#2ea8ff 80%)', 20: 'linear-gradient(135deg,#ffb02e,#ff2e63,#a62eff,#2ea8ff)',
+};
+
+const ui = {
   modes: [],
+  defaultPalette: [],
+  status: null,
+  mode: 3,                // selected mode in the UI
+  settings: {},           // per-mode {speed, brightness, color, direction_left, palette}
+  powerOn: true,
+  editingPreset: 0,
+  dirtyPalette: {},       // {presetIndex: '#hex'} not yet sent
+  lastLocalChange: 0,
+  inflight: 0,
   profiles: [],
-  selectedKeys: new Set(),
-  activeGroup: 'all',
-  animFrameId: null
+  keys: [],               // {el, code, x, y, cx, cy}
+  presses: [],
 };
 
-// Mode Icons
-const MODE_ICONS = {
-  off: '⏻',
-  rainbow: '🌈',
-  static: '🔴',
-  snake: '🐍'
-};
+const $ = (id) => document.getElementById(id);
 
-// API Helpers
-async function apiGet(endpoint) {
+/* ---------------- API ---------------- */
+async function api(method, url, body) {
   try {
-    const res = await fetch(endpoint);
-    return await res.json();
-  } catch (err) {
-    console.error(`GET ${endpoint} failed:`, err);
-    return null;
-  }
-}
-
-async function apiPost(endpoint, data = {}) {
-  try {
-    const res = await fetch(endpoint, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data)
+    const res = await fetch(url, {
+      method,
+      headers: body ? { 'Content-Type': 'application/json' } : undefined,
+      body: body ? JSON.stringify(body) : undefined,
     });
-    return await res.json();
-  } catch (err) {
-    console.error(`POST ${endpoint} failed:`, err);
-    return null;
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok && data.success === undefined) data.success = false;
+    return data;
+  } catch (e) {
+    return { success: false, error: 'Sunucuya ulaşılamıyor. Uygulama kapalı olabilir.', offline: true };
   }
 }
 
-// Toast Notifications
-function showToast(message, type = 'success') {
-  const container = document.getElementById('toast-container');
-  const toast = document.createElement('div');
-  toast.className = `toast toast-${type}`;
-  toast.innerHTML = `<span>${message}</span>`;
-  container.appendChild(toast);
-  setTimeout(() => {
-    toast.style.opacity = '0';
-    toast.style.transform = 'translateY(10px)';
-    setTimeout(() => toast.remove(), 200);
-  }, 3000);
+function toast(msg, isErr = false) {
+  const el = document.createElement('div');
+  el.className = 'toast' + (isErr ? ' err' : '');
+  el.textContent = msg;
+  $('toasts').appendChild(el);
+  setTimeout(() => { el.style.opacity = '0'; el.style.transform = 'translateY(6px)'; }, isErr ? 6000 : 2600);
+  setTimeout(() => el.remove(), isErr ? 6300 : 2900);
 }
 
-// Initialize Application
-async function initApp() {
-  console.log('Initializing Rampage RGB Controller UI...');
-  
-  // 1. Fetch initial definitions in parallel
-  const [layoutData, modesData, statusData, profilesData] = await Promise.all([
-    apiGet('/api/device/layout'),
-    apiGet('/api/device/modes'),
-    apiGet('/api/device/status'),
-    apiGet('/api/profiles')
-  ]);
+/* ---------------- Status ---------------- */
+function applyStatus(st, { force = false } = {}) {
+  if (!st) return;
+  ui.status = st;
+  renderConnection(st);
 
-  if (layoutData) {
-    state.layout = layoutData.rows;
-    state.groups = layoutData.groups;
+  const s = st.state || {};
+  const userBusy = ui.inflight > 0 || Date.now() - ui.lastLocalChange < 2500;
+  if (s.modes) {
+    for (const [mid, cfg] of Object.entries(s.modes)) {
+      if (!userBusy || force || !ui.settings[mid]) ui.settings[mid] = { ...cfg };
+    }
   }
-  if (modesData) state.modes = modesData;
-  if (profilesData) state.profiles = profilesData;
-
-  if (statusData) {
-    updateDeviceStatus(statusData);
+  if (!userBusy || force) {
+    ui.perKey = Boolean(s.per_key);
+    ui.perKeyTitle = s.mode_title;
+    ui.powerOn = s.mode !== 0;
+    if (s.mode && !s.per_key) ui.mode = s.mode;
+    else if (st.last_on_mode) ui.mode = st.last_on_mode;
+    renderAll();
   }
-
-  // 2. Render UI components
-  renderGroupButtons();
-  renderKeyboard();
-  renderModesList();
-  renderProfilesList();
-  setupEventListeners();
-
-  // 3. Start Keyboard Glow Animation Loop
-  startKeyboardAnimation();
-
-  // 4. Background polling for device status
-  setInterval(checkStatus, 3000);
+  renderProtocol(st);
 }
 
-// Update Status Badge
-function updateDeviceStatus(statusData) {
-  state.connected = statusData.connected;
-  state.deviceInfo = statusData.device;
-  
-  const badge = document.getElementById('device-status-badge');
-  const text = document.getElementById('status-text');
-  
-  if (state.connected) {
-    badge.className = 'status-pill status-connected';
-    text.textContent = 'Bağlı • ' + (statusData.device.name || 'Rampage RGB');
+function renderConnection(st) {
+  const pill = $('status-pill');
+  const banner = $('banner');
+  if (st.connected) {
+    pill.className = 'pill pill-ok';
+    $('status-text').textContent = 'Klavye bağlı';
+    banner.hidden = true;
   } else {
-    badge.className = 'status-pill status-disconnected';
-    text.textContent = 'Klavye Aranıyor...';
+    const perm = st.error_code === 'permission';
+    pill.className = 'pill ' + (perm ? 'pill-err' : 'pill-wait');
+    $('status-text').textContent = perm ? 'İzin gerekli' : (st.found ? 'Bağlanılamadı' : 'Klavye aranıyor…');
+    banner.hidden = false;
+    banner.classList.toggle('err', perm);
+    $('banner-title').textContent = perm ? 'macOS erişim izni gerekiyor' : 'Klavyeye ulaşılamıyor';
+    $('banner-text').textContent = st.error || 'Klavyeyi USB ile takın.';
   }
-
-  if (statusData.state) {
-    const s = statusData.state;
-    state.activeMode = s.mode;
-    state.speed = s.speed;
-    state.brightness = s.brightness;
-    
-    // Sync slider controls
-    document.getElementById('slider-brightness').value = state.brightness;
-    document.getElementById('brightness-val-text').textContent = `%${state.brightness * 25} (${state.brightness}/4)`;
-    
-    document.getElementById('slider-speed').value = state.speed;
-    const speedLabels = ['Çok Yavaş', 'Yavaş', 'Normal', 'Hızlı', 'Çok Hızlı'];
-    document.getElementById('speed-val-text').textContent = `${speedLabels[state.speed]} (${state.speed}/4)`;
-  }
+  const note = $('sync-note');
+  if (!st.connected) note.textContent = '';
+  else if (st.readback) note.textContent = 'Klavyeyle eşzamanlı';
+  else note.textContent = 'Klavye durumu okunamıyor — son gönderilen ayar';
 }
 
-async function checkStatus() {
-  const statusData = await apiGet('/api/device/status');
-  if (statusData) {
-    updateDeviceStatus(statusData);
+async function pollStatus() {
+  if (document.hidden) return;
+  const st = await api('GET', '/api/device/status');
+  if (st.offline) {
+    $('status-pill').className = 'pill pill-err';
+    $('status-text').textContent = 'Sunucu kapalı';
+    return;
   }
+  applyStatus(st);
 }
 
-// Render Quick Selection Group Chips
-function renderGroupButtons() {
-  const container = document.getElementById('group-buttons-container');
-  container.innerHTML = '';
+/* ---------------- Apply ---------------- */
+let applyTimer = null;
+function scheduleApply(delay = 120) {
+  ui.lastLocalChange = Date.now();
+  clearTimeout(applyTimer);
+  applyTimer = setTimeout(applyNow, delay);
+}
 
-  const groupKeys = Object.keys(state.groups);
-  groupKeys.forEach(gKey => {
-    const grp = state.groups[gKey];
-    const btn = document.createElement('button');
-    btn.className = `chip-btn ${state.activeGroup === gKey ? 'active' : ''}`;
-    btn.textContent = grp.title.split(' (')[0];
-    btn.onclick = () => selectGroup(gKey);
-    container.appendChild(btn);
+async function applyNow() {
+  const mid = ui.mode;
+  const s = cur();
+  const body = {
+    mode: mid,
+    speed: s.speed,
+    brightness: s.brightness,
+    color: s.color,
+    direction_left: s.direction_left,
+  };
+  if (Object.keys(ui.dirtyPalette).length) body.palette = { ...ui.dirtyPalette };
+  ui.dirtyPalette = {};
+  await send('/api/device/apply', body);
+}
+
+async function send(url, body) {
+  ui.inflight++;
+  setApplyState('busy', 'Gönderiliyor…');
+  const res = await api('POST', url, body);
+  ui.inflight--;
+  ui.lastLocalChange = Date.now();
+  if (res.success) {
+    if (res.verified === true) setApplyState('ok', '✓ Klavyeye uygulandı');
+    else if (res.verified === false) setApplyState('err', 'Gönderildi, doğrulanamadı');
+    else setApplyState('ok', '✓ Gönderildi');
+    if (res.status) renderConnection(res.status);
+  } else {
+    setApplyState('err', 'Uygulanamadı');
+    toast(res.error || 'Klavyeye gönderilemedi.', true);
+    if (res.status) renderConnection(res.status);
+  }
+  return res;
+}
+
+let applyStateTimer = null;
+function setApplyState(kind, text) {
+  const el = $('apply-state');
+  el.className = 'apply-state ' + kind;
+  el.textContent = text;
+  clearTimeout(applyStateTimer);
+  if (kind !== 'busy') applyStateTimer = setTimeout(() => { el.textContent = ''; }, 3500);
+}
+
+/* ---------------- Helpers ---------------- */
+function modeInfo(id) { return ui.modes.find((m) => m.id === id) || ui.modes[0]; }
+function cur() {
+  if (!ui.settings[ui.mode]) {
+    ui.settings[ui.mode] = { speed: 2, brightness: 4, color: RANDOM, direction_left: false, palette: [...ui.defaultPalette] };
+  }
+  const s = ui.settings[ui.mode];
+  if (!s.palette) s.palette = [...ui.defaultPalette];
+  return s;
+}
+
+/* ---------------- Rendering ---------------- */
+function renderAll() {
+  renderModes();
+  renderSettings();
+  renderPower();
+}
+
+function renderPower() {
+  const b = $('btn-power');
+  b.setAttribute('aria-pressed', String(ui.powerOn));
+  $('power-label').textContent = ui.powerOn ? 'Açık' : 'Kapalı';
+  let title = ui.powerOn ? `Önizleme · ${modeInfo(ui.mode).title}` : 'Önizleme · Işıklar kapalı';
+  if (ui.perKey) title = `Klavyede: ${ui.perKeyTitle} · bir efekt seçerek değiştirin`;
+  $('preview-title').textContent = title;
+}
+
+function renderProtocol(st) {
+  const sel = $('proto-select');
+  if (!sel.childElementCount && ui.protocols) {
+    sel.add(new Option('Otomatik algıla', ''));
+    for (const [k, title] of Object.entries(ui.protocols)) sel.add(new Option(title, k));
+  }
+  if (document.activeElement !== sel) sel.value = st.protocol || '';
+  $('proto-val').textContent = st.protocol ? (st.protocol_confirmed ? '✓ doğrulandı' : 'doğrulanmadı') : 'otomatik';
+}
+
+function renderModes() {
+  const box = $('modes');
+  if (!box.childElementCount) {
+    ui.modes.filter((m) => m.id !== 0).forEach((m) => {
+      const b = document.createElement('button');
+      b.className = 'mode';
+      b.setAttribute('role', 'radio');
+      b.dataset.id = m.id;
+      b.innerHTML = `<span class="ic"></span><span><span class="t"></span><span class="d"></span></span>`;
+      b.querySelector('.ic').style.setProperty('--sw', MODE_SWATCH[m.id] || '#444');
+      b.querySelector('.t').textContent = m.title;
+      b.querySelector('.d').textContent = m.description;
+      b.onclick = () => selectMode(m.id);
+      box.appendChild(b);
+    });
+    $('mode-count').textContent = `${box.childElementCount} efekt`;
+  }
+  box.querySelectorAll('.mode').forEach((b) => {
+    b.setAttribute('aria-checked', String(ui.powerOn && !ui.perKey && Number(b.dataset.id) === ui.mode));
   });
 }
 
-function selectGroup(groupKey) {
-  state.activeGroup = groupKey;
-  state.selectedKeys.clear();
-
-  if (state.groups[groupKey]) {
-    state.groups[groupKey].keys.forEach(k => state.selectedKeys.add(k));
+function buildSeg(id, labels, getter, setter) {
+  const box = $(id);
+  if (!box.childElementCount) {
+    labels.forEach((label, v) => {
+      const b = document.createElement('button');
+      b.setAttribute('role', 'radio');
+      b.dataset.v = v;
+      b.textContent = label;
+      box.appendChild(b);
+    });
   }
-
-  document.querySelectorAll('.chip-btn').forEach(btn => {
-    btn.classList.toggle('active', btn.textContent === state.groups[groupKey].title.split(' (')[0]);
+  box.querySelectorAll('button').forEach((b) => {
+    b.setAttribute('aria-checked', String(Number(b.dataset.v) === getter()));
+    b.onclick = () => setter(Number(b.dataset.v));
   });
-
-  document.querySelectorAll('.key-cap').forEach(el => {
-    const code = el.dataset.code;
-    el.classList.toggle('key-selected', state.selectedKeys.has(code));
-  });
-
-  const countEl = document.getElementById('selection-count');
-  countEl.textContent = `${state.selectedKeys.size} tuş seçildi (${state.groups[groupKey].title})`;
 }
 
-// Render Interactive Turkish Q Keyboard
-function renderKeyboard() {
-  const chassis = document.getElementById('keyboard-chassis');
-  chassis.innerHTML = '';
+function renderSettings() {
+  const m = modeInfo(ui.mode);
+  const s = cur();
+  $('settings-title').textContent = m.title;
+  $('settings-desc').textContent = m.description;
 
-  if (!state.layout) return;
+  buildSeg('seg-brightness', ['0', '1', '2', '3', '4'], () => s.brightness, (v) => { s.brightness = v; changed(); });
+  $('brightness-val').textContent = BRIGHT_LABELS[s.brightness];
 
-  const baseUnit = 48; // px for 1.0 width
+  $('field-speed').hidden = !m.has_speed;
+  buildSeg('seg-speed', ['1', '2', '3', '4', '5'], () => s.speed, (v) => { s.speed = v; changed(); });
+  $('speed-val').textContent = SPEED_LABELS[s.speed];
 
-  state.layout.forEach(row => {
-    const rowEl = document.createElement('div');
-    rowEl.className = 'kb-row';
+  $('field-direction').hidden = !m.has_direction;
+  $('seg-direction').querySelectorAll('button').forEach((b) => {
+    b.setAttribute('aria-checked', String(Boolean(Number(b.dataset.v)) === Boolean(s.direction_left)));
+    b.onclick = () => { s.direction_left = Boolean(Number(b.dataset.v)); changed(); };
+  });
 
-    row.forEach(key => {
-      const keyEl = document.createElement('div');
-      keyEl.className = `key-cap type-${key.type || 'alpha'}`;
-      keyEl.dataset.code = key.code;
+  $('field-color').hidden = !m.has_color;
+  $('no-color-note').hidden = m.has_color;
+  renderSwatches();
+}
 
-      const width = (key.w || 1.0) * baseUnit + ((key.w || 1.0) - 1) * 6;
-      keyEl.style.width = `${width}px`;
+function renderSwatches() {
+  const s = cur();
+  const box = $('swatches');
+  box.innerHTML = '';
+  const rnd = document.createElement('button');
+  rnd.className = 'sw sw-random';
+  rnd.textContent = 'Renkli';
+  rnd.title = 'Renkli / rastgele';
+  rnd.setAttribute('role', 'radio');
+  rnd.setAttribute('aria-checked', String(s.color === RANDOM));
+  rnd.onclick = () => { s.color = RANDOM; changed(); };
+  box.appendChild(rnd);
 
-      if (key.h && key.h > 1.0) {
-        keyEl.style.height = `${key.h * baseUnit + (key.h - 1) * 6}px`;
-      }
+  s.palette.forEach((hex, i) => {
+    const b = document.createElement('button');
+    b.className = 'sw';
+    b.style.setProperty('--c', hex);
+    b.title = `Renk ${i + 1}: ${hex}`;
+    b.setAttribute('role', 'radio');
+    b.setAttribute('aria-label', `Renk ${i + 1}`);
+    b.setAttribute('aria-checked', String(s.color === i));
+    b.onclick = () => { s.color = i; ui.editingPreset = i; changed(); };
+    box.appendChild(b);
+  });
 
-      if (key.type !== 'spacer') {
-        const legend = document.createElement('span');
-        legend.className = 'key-legend';
-        legend.textContent = key.label || '';
-        keyEl.appendChild(legend);
+  const editing = s.color !== RANDOM;
+  $('color-edit').hidden = !editing;
+  if (editing) {
+    ui.editingPreset = s.color;
+    const hex = s.palette[s.color].toLowerCase();
+    $('color-input').value = hex;
+    if (document.activeElement !== $('color-hex')) $('color-hex').value = hex.toUpperCase();
+  }
+  $('color-val').textContent = editing ? `Renk ${s.color + 1}` : 'Renkli';
+}
 
-        if (key.sub) {
+function changed() {
+  ui.powerOn = true;
+  ui.perKey = false;
+  renderAll();
+  scheduleApply();
+}
+
+function selectMode(id) {
+  ui.mode = id;
+  ui.dirtyPalette = {};
+  changed();
+}
+
+function setPresetColor(hex, commit) {
+  const s = cur();
+  const i = ui.editingPreset;
+  s.palette[i] = hex.toUpperCase();
+  const sw = $('swatches').children[i + 1];
+  if (sw) sw.style.setProperty('--c', hex);
+  if (commit) {
+    ui.dirtyPalette[i] = s.palette[i];
+    changed();
+  } else {
+    ui.lastLocalChange = Date.now();
+  }
+}
+
+/* ---------------- Profiles ---------------- */
+function profileSwatch(p) {
+  const pal = p.palette ? (Array.isArray(p.palette) ? p.palette : Object.values(p.palette)) : [];
+  if (p.color !== RANDOM && p.color != null && pal.length) return pal[0];
+  return null;
+}
+
+function renderProfiles() {
+  const list = $('profiles');
+  list.innerHTML = '';
+  if (!ui.profiles.length) {
+    list.innerHTML = '<li class="muted small">Henüz profil yok.</li>';
+    return;
+  }
+  ui.profiles.forEach((p) => {
+    const li = document.createElement('li');
+    li.className = 'profile';
+    const sw = profileSwatch(p);
+    const mid = ui.modes.find((m) => m.name === p.mode);
+    li.innerHTML = `<span class="dot"></span><button class="name" style="text-align:left;background:none;border:0"></button>
+      <span class="meta"></span>`;
+    li.querySelector('.dot').style.background = sw || 'conic-gradient(#ff2e63,#2fd27f,#2ea8ff,#ff2e63)';
+    li.querySelector('.name').textContent = p.name;
+    li.querySelector('.name').title = 'Uygula';
+    li.querySelector('.meta').textContent = mid ? mid.title : p.mode;
+    li.querySelector('.name').onclick = () => applyProfile(p);
+
+    const apply = document.createElement('button');
+    apply.className = 'btn btn-ghost';
+    apply.textContent = 'Uygula';
+    apply.onclick = () => applyProfile(p);
+    li.appendChild(apply);
+
+    if (!p.is_default) {
+      const del = document.createElement('button');
+      del.className = 'icon-btn';
+      del.title = 'Sil';
+      del.setAttribute('aria-label', `${p.name} profilini sil`);
+      del.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>';
+      del.onclick = async () => {
+        if (!confirm(`“${p.name}” silinsin mi?`)) return;
+        const res = await api('DELETE', `/api/profiles?id=${encodeURIComponent(p.id)}`);
+        if (res.success) { ui.profiles = res.profiles; renderProfiles(); }
+      };
+      li.appendChild(del);
+    }
+    list.appendChild(li);
+  });
+}
+
+async function applyProfile(p) {
+  clearTimeout(applyTimer);
+  const res = await send('/api/profiles/apply', { id: p.id });
+  if (res.success) {
+    toast(`Profil uygulandı: ${p.name}`);
+    const st = await api('GET', '/api/device/status');
+    if (!st.offline) {
+      // Without readback the server can only echo what was sent; trust it here.
+      applyStatus(st, { force: true });
+    }
+  }
+}
+
+async function saveProfile(e) {
+  e.preventDefault();
+  const name = $('profile-name').value.trim();
+  if (!name) { $('profile-name').focus(); return; }
+  const s = cur();
+  const res = await api('POST', '/api/profiles', {
+    name,
+    mode: ui.mode,
+    speed: s.speed,
+    brightness: s.brightness,
+    color: s.color,
+    direction_left: s.direction_left,
+    palette: s.color === RANDOM ? null : { [s.color]: s.palette[s.color] },
+  });
+  if (res.success) {
+    ui.profiles = res.profiles;
+    $('profile-name').value = '';
+    renderProfiles();
+    toast(`“${name}” kaydedildi`);
+  } else {
+    toast(res.error || 'Kaydedilemedi', true);
+  }
+}
+
+/* ---------------- Keyboard preview ---------------- */
+function buildKeyboard(rows) {
+  const kb = $('kb');
+  kb.innerHTML = '';
+  ui.keys = [];
+  let maxX = 0;
+  rows.forEach((row, r) => {
+    let x = 0;
+    const y = r + (r > 0 ? 0.35 : 0);
+    row.forEach((k) => {
+      const w = k.w || 1;
+      const h = k.h || 1;
+      if (k.type !== 'spacer') {
+        const el = document.createElement('div');
+        el.className = 'key';
+        el.style.left = `calc(var(--u) * ${x + 0.3} + 2px)`;
+        el.style.top = `calc(var(--u) * ${y + 0.3} + 2px)`;
+        el.style.width = `calc(var(--u) * ${w} - 4px)`;
+        el.style.height = `calc(var(--u) * ${h} - 4px)`;
+        el.textContent = k.label || '';
+        if (k.sub) {
           const sub = document.createElement('span');
-          sub.className = 'key-sublegend';
-          sub.textContent = key.sub;
-          keyEl.appendChild(sub);
+          sub.className = 'sub';
+          sub.textContent = k.sub;
+          el.prepend(sub);
         }
-
-        keyEl.onclick = () => {
-          state.selectedKeys.clear();
-          state.selectedKeys.add(key.code);
-          state.activeGroup = 'custom';
-          document.querySelectorAll('.chip-btn').forEach(b => b.classList.remove('active'));
-          
-          document.querySelectorAll('.key-cap').forEach(el => {
-            el.classList.toggle('key-selected', state.selectedKeys.has(el.dataset.code));
-          });
-          document.getElementById('selection-count').textContent = `${state.selectedKeys.size} tuş seçildi (${key.label})`;
-        };
+        const key = { el, code: k.code, x, y, cx: x + w / 2, cy: y + h / 2 };
+        el.onpointerdown = () => press(key);
+        ui.keys.push(key);
+        kb.appendChild(el);
       }
-
-      rowEl.appendChild(keyEl);
+      x += w;
     });
-
-    chassis.appendChild(rowEl);
+    maxX = Math.max(maxX, x);
   });
-
-  selectGroup('all');
+  ui.kbW = maxX;
+  ui.kbH = rows.length + 0.35;
+  ui.keys.forEach((k) => { k.nx = k.cx / maxX; k.ny = k.cy / ui.kbH; });
+  // Serpentine order for the snake effect
+  const sorted = [...ui.keys].sort((a, b) => (a.y - b.y) || (a.x - b.x));
+  const byRow = {};
+  sorted.forEach((k) => (byRow[k.y] = byRow[k.y] || []).push(k));
+  let order = 0;
+  Object.keys(byRow).sort((a, b) => a - b).forEach((ry, i) => {
+    const arr = i % 2 ? byRow[ry].slice().reverse() : byRow[ry];
+    arr.forEach((k) => { k.order = order++; });
+  });
+  kb.style.width = `calc(var(--u) * ${maxX + 0.6})`;
+  kb.style.height = `calc(var(--u) * ${ui.kbH + 0.6})`;
+  fitKeyboard();
 }
 
-// Render Lighting Modes Cards
-function renderModesList() {
-  const container = document.getElementById('modes-list-container');
-  container.innerHTML = '';
-
-  // Filter modes: 1 (rainbow), 2 (static red), 3 (snake), 0 (off)
-  const displayModes = state.modes.filter(m => [1, 2, 3, 0].includes(m.id));
-
-  displayModes.forEach(mode => {
-    const item = document.createElement('div');
-    item.className = `mode-item ${state.activeMode === mode.id ? 'active' : ''}`;
-    item.dataset.modeId = mode.id;
-
-    const icon = MODE_ICONS[mode.name] || '💡';
-    
-    let badgesHtml = '';
-    if (mode.has_speed) badgesHtml += '<span class="meta-badge">Hız Ayarlı</span>';
-    if (mode.has_brightness) badgesHtml += '<span class="meta-badge">Parlaklık Ayarlı</span>';
-
-    item.innerHTML = `
-      <div class="mode-icon">${icon}</div>
-      <div class="mode-info">
-        <div class="mode-title">${mode.title}</div>
-        <div class="mode-meta">${badgesHtml}</div>
-      </div>
-    `;
-
-    item.onclick = () => selectMode(mode.id);
-    container.appendChild(item);
-  });
-
-  document.getElementById('mode-count').textContent = `${displayModes.length} Mod`;
+function fitKeyboard() {
+  const avail = $('kb-wrap').clientWidth;
+  const u = Math.max(14, Math.min(46, (avail - 4) / (ui.kbW + 0.6)));
+  $('kb').style.setProperty('--u', `${u}px`);
 }
 
-// Select & Apply a Mode
-async function selectMode(modeId) {
-  state.activeMode = modeId;
-  state.powerOn = (modeId !== 0);
-  
-  document.querySelectorAll('.mode-item').forEach(el => {
-    el.classList.toggle('active', parseInt(el.dataset.modeId) === modeId);
-  });
-
-  const speedGroup = document.getElementById('speed-param-group');
-  if (speedGroup) {
-    speedGroup.style.display = (modeId === 1 || modeId === 3) ? 'flex' : 'none';
-  }
-
-  // Send API command to device
-  const res = await apiPost('/api/device/mode', {
-    mode: modeId,
-    speed: state.speed,
-    brightness: state.brightness
-  });
-
-  if (res && res.success) {
-    const modeObj = state.modes.find(m => m.id === modeId);
-    showToast(`Uygulandı: ${modeObj ? modeObj.title.split(' (')[0] : modeId}`);
-  }
+function press(key) {
+  ui.presses.push({ k: key, t: performance.now() / 1000 });
+  if (ui.presses.length > 24) ui.presses.shift();
+  key.el.classList.add('pressed');
+  setTimeout(() => key.el.classList.remove('pressed'), 120);
 }
 
-// Render Saved Profiles
-function renderProfilesList() {
-  const container = document.getElementById('profiles-list-container');
-  container.innerHTML = '';
+function hexRgb(hex) {
+  const n = parseInt(hex.slice(1), 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+function hsl(h) {
+  h = ((h % 360) + 360) % 360 / 60;
+  const x = 1 - Math.abs((h % 2) - 1);
+  const [r, g, b] = h < 1 ? [1, x, 0] : h < 2 ? [x, 1, 0] : h < 3 ? [0, 1, x] : h < 4 ? [0, x, 1] : h < 5 ? [x, 0, 1] : [1, 0, x];
+  return [r * 255, g * 255, b * 255];
+}
+function hash(n) { const s = Math.sin(n * 127.1) * 43758.5453; return s - Math.floor(s); }
 
-  state.profiles.forEach(p => {
-    const card = document.createElement('div');
-    card.className = 'profile-card';
+const REACTIVE = new Set([4, 7, 9, 12]);
 
-    const colorDot = p.color ? `<span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${p.color};margin-right:6px;"></span>` : '';
-
-    card.innerHTML = `
-      <div class="profile-info">
-        <div class="profile-name">${colorDot}${p.name}</div>
-        <div class="profile-desc">${p.description || p.mode}</div>
-      </div>
-      <div class="profile-actions">
-        <button class="btn btn-secondary btn-sm btn-apply-profile">Uygula</button>
-      </div>
-    `;
-
-    card.querySelector('.btn-apply-profile').onclick = async () => {
-      const res = await apiPost('/api/profiles/apply', { id: p.id });
-      if (res && res.success) {
-        document.querySelectorAll('.profile-card').forEach(c => c.classList.remove('active-profile'));
-        card.classList.add('active-profile');
-        showToast(`Profil uygulandı: ${p.name}`);
-        if (res.state) {
-          updateDeviceStatus({ connected: true, device: state.deviceInfo, state: res.state });
-        }
+function effect(mode, k, t, ctx) {
+  const { s, base, dir, now } = ctx;
+  const random = s.color === RANDOM;
+  const pick = (h) => (random ? hsl(h) : base);
+  const dx = k.nx - 0.5, dy = (k.ny - 0.5) * 0.45;
+  const ang = Math.atan2(dy, dx) * 180 / Math.PI;
+  const r = Math.hypot(dx, dy);
+  switch (mode) {
+    case 1: return [pick(k.x * 17 + k.y * 40), 1];
+    case 2: { const ph = t * 1.6; return [pick(Math.floor(ph / (2 * Math.PI)) * 70), (Math.sin(ph - Math.PI / 2) + 1) / 2]; }
+    case 3: return [hsl(k.nx * 360 - t * 90 * dir), 1];
+    case 5: { const col = Math.round(k.x); const pos = ((t * 0.55 + hash(col)) % 1); const d = (k.ny - pos); return [pick(hash(col + 3) * 360), d < 0 && d > -0.35 ? 1 + d / 0.35 : 0]; }
+    case 6: return [hsl(ang - t * 90 * dir), 1];
+    case 8: { const v = Math.max(0, Math.sin(t * 1.3 + hash(k.order) * 40)); return [pick(hash(k.order + 9) * 360), v ** 6]; }
+    case 10: { const head = (t * 14 * dir + 1e6) % ui.keys.length; let d = (head - k.order) * dir; d = ((d % ui.keys.length) + ui.keys.length) % ui.keys.length; return [pick(k.order * 6), d < 10 ? 1 - d / 10 : 0]; }
+    case 11: return [hsl(t * 40), 1];
+    case 13: return [pick(k.nx * 200 + t * 30), (Math.sin(k.nx * 12 - t * 3 * dir) + 1) / 2];
+    case 14: { const p = (Math.sin(t * 1.4) + 1) / 2; const pos = dir > 0 ? p : 1 - p; return [pick(t * 50), Math.max(0, 1 - Math.abs(k.nx - pos) * 9)]; }
+    case 15: return [pick(ang + t * 40), ((Math.cos(((ang - t * 120 * dir) * 4) * Math.PI / 180) + 1) / 2) ** 2];
+    case 16: return [hsl(k.ny * 200 - t * 110 * dir + k.nx * 30), 1];
+    case 17: { const v = (Math.sin(r * 18 - t * 3) + 1) / 2; return [pick(r * 500 - t * 60), 0.25 + 0.75 * v]; }
+    case 18: return [pick(ang + r * 700 - t * 150 * dir), 0.35 + 0.65 * ((Math.sin((ang + r * 700 - t * 150 * dir) * Math.PI / 90) + 1) / 2)];
+    case 19: { const p = (t * 0.45) % 1; const a = Math.max(0, 1 - Math.abs(k.nx - p * 0.5) * 12), b = Math.max(0, 1 - Math.abs(k.nx - (1 - p * 0.5)) * 12); const flash = p > 0.92 ? (1 - (p - 0.92) / 0.08) * Math.max(0, 1 - r * 4) : 0; return [a >= b ? pick(0) : pick(200), Math.min(1, Math.max(a, b, flash))]; }
+    case 20: return [hsl(t * 60 + k.nx * 40), 1];
+    default: {
+      // reactive effects: 4 flash away, 7 ripples, 9 shadow, 12 reaction
+      let a = mode === 9 ? 1 : 0;
+      let col = pick(k.order * 5);
+      for (const p of ctx.presses) {
+        const age = now - p.t;
+        const d = Math.hypot(k.cx - p.k.cx, (k.cy - p.k.cy) * 1.1);
+        if (mode === 12 && p.k === k) a = Math.max(a, 1 - age / 1.2);
+        if (mode === 9 && p.k === k) a = Math.min(a, age / 1.6);
+        if (mode === 4) { const ring = age * 9; a = Math.max(a, Math.max(0, 1 - Math.abs(d - ring) / 1.6) * Math.max(0, 1 - age / 1.6)); }
+        if (mode === 7) { const ring = age * 7; const v = Math.max(0, 1 - Math.abs(d - ring) / 0.9) * Math.max(0, 1 - age / 2.2); if (v > a) { a = v; if (random) col = hsl(p.t * 97); } }
       }
+      return [col, Math.max(0, Math.min(1, a))];
+    }
+  }
+}
+
+function startPreview() {
+  const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  let simT = 0;
+  let last = performance.now();
+  let lastDemo = 0;
+
+  function frame(nowMs) {
+    const dt = Math.min(0.1, (nowMs - last) / 1000);
+    last = nowMs;
+    const now = nowMs / 1000;
+    const m = ui.mode;
+    const s = cur();
+    const info = modeInfo(m);
+    simT += dt * (info.has_speed ? 0.35 + s.speed * 0.4 : 1) * (reduced ? 0.3 : 1);
+
+    // Demo presses so reactive effects show something when idle
+    if (ui.powerOn && REACTIVE.has(m) && now - lastDemo > 1.4 && ui.keys.length) {
+      const lastPress = ui.presses[ui.presses.length - 1];
+      if (!lastPress || now - lastPress.t > 2.5) press(ui.keys[Math.floor(Math.random() * ui.keys.length)]);
+      lastDemo = now;
+    }
+    ui.presses = ui.presses.filter((p) => now - p.t < 3);
+
+    const level = ui.powerOn ? s.brightness / 4 : 0;
+    const ctx = {
+      s, now, presses: ui.presses,
+      dir: s.direction_left ? -1 : 1,
+      base: hexRgb(s.color === RANDOM ? '#ffffff' : s.palette[s.color] || '#ffffff'),
     };
-
-    container.appendChild(card);
-  });
-}
-
-// Event Listeners Setup
-function setupEventListeners() {
-  // Power Button
-  const pwrBtn = document.getElementById('btn-power');
-  pwrBtn.onclick = async () => {
-    state.powerOn = !state.powerOn;
-    if (!state.powerOn) {
-      pwrBtn.classList.add('active-power');
-      await apiPost('/api/device/off');
-      selectMode(0);
-      showToast('Klavye ışıkları kapatıldı (Off).');
-    } else {
-      pwrBtn.classList.remove('active-power');
-      await selectMode(1);
-      showToast('Klavye ışıkları açıldı (Gökkuşağı).');
+    for (const k of ui.keys) {
+      let col = [0, 0, 0], a = 0;
+      if (level > 0) [col, a] = effect(m, k, simT, ctx);
+      k.el.style.setProperty('--led', `${col[0] | 0}, ${col[1] | 0}, ${col[2] | 0}`);
+      k.el.style.setProperty('--a', (a * (0.25 + 0.75 * level)).toFixed(3));
     }
-  };
-
-  // Shutdown Application Button
-  const shutdownBtn = document.getElementById('btn-shutdown-app');
-  shutdownBtn.onclick = async () => {
-    const confirmed = confirm("Uygulama kapatılacak. Klavyenizin mevcut aydınlatma ayarları korunacaktır. Çıkmak istiyor musunuz?");
-    if (!confirmed) return;
-
-    const res = await apiPost('/api/server/shutdown');
-    if (res && res.success) {
-      document.getElementById('shutdown-overlay').style.display = 'flex';
-      showToast('Uygulama kapatıldı. Klavye ayarları korundu.');
-    }
-  };
-
-  // Quick Action Buttons
-  document.getElementById('btn-quick-rainbow').onclick = () => selectMode(1);
-  document.getElementById('btn-quick-red').onclick = () => selectMode(2);
-  document.getElementById('btn-quick-snake').onclick = () => selectMode(3);
-  document.getElementById('btn-quick-off').onclick = () => selectMode(0);
-
-  // Brightness Slider
-  const bSlider = document.getElementById('slider-brightness');
-  bSlider.oninput = (e) => {
-    state.brightness = parseInt(e.target.value);
-    document.getElementById('brightness-val-text').textContent = `%${state.brightness * 25} (${state.brightness}/4)`;
-  };
-  bSlider.onchange = async () => {
-    await apiPost('/api/device/mode', {
-      mode: state.activeMode,
-      speed: state.speed,
-      brightness: state.brightness
-    });
-  };
-
-  // Speed Slider
-  const sSlider = document.getElementById('slider-speed');
-  sSlider.oninput = (e) => {
-    state.speed = parseInt(e.target.value);
-    const speedLabels = ['Çok Yavaş', 'Yavaş', 'Normal', 'Hızlı', 'Çok Hızlı'];
-    document.getElementById('speed-val-text').textContent = `${speedLabels[state.speed]} (${state.speed}/4)`;
-  };
-  sSlider.onchange = async () => {
-    await apiPost('/api/device/mode', {
-      mode: state.activeMode,
-      speed: state.speed,
-      brightness: state.brightness
-    });
-  };
-}
-
-// Realtime Keyboard Backlight Visualizer Animation Loop
-function startKeyboardAnimation() {
-  let time = 0;
-
-  function renderFrame() {
-    time += 0.03 * (state.speed + 1);
-
-    const keyElements = document.querySelectorAll('.key-cap:not(.type-spacer)');
-    keyElements.forEach((keyEl, index) => {
-      if (!state.powerOn || state.activeMode === 0) {
-        keyEl.classList.remove('key-active-led');
-        keyEl.style.removeProperty('--key-active-glow');
-        return;
-      }
-
-      keyEl.classList.add('key-active-led');
-
-      if (state.activeMode === 1) { // Rainbow wave
-        const hue = (time * 20 + index * 4) % 360;
-        keyEl.style.setProperty('--key-active-glow', `hsl(${hue}, 100%, 55%)`);
-      } else if (state.activeMode === 2) { // Static Red
-        keyEl.style.setProperty('--key-active-glow', '#FF0000');
-      } else if (state.activeMode === 3) { // Snake
-        const isSnake = Math.sin(time * 3 + index * 0.4) > 0.5;
-        keyEl.style.setProperty('--key-active-glow', isSnake ? '#00FF00' : '#FF0055');
-      } else {
-        keyEl.style.setProperty('--key-active-glow', '#FF0000');
-      }
-    });
-
-    state.animFrameId = requestAnimationFrame(renderFrame);
+    requestAnimationFrame(frame);
   }
-
-  renderFrame();
+  requestAnimationFrame(frame);
 }
 
-document.addEventListener('DOMContentLoaded', initApp);
+/* ---------------- Events ---------------- */
+function setupEvents() {
+  $('btn-power').onclick = async () => {
+    clearTimeout(applyTimer);
+    ui.powerOn = !ui.powerOn;
+    ui.lastLocalChange = Date.now();
+    renderAll();
+    const res = await send(ui.powerOn ? '/api/device/on' : '/api/device/off');
+    if (!res.success) { ui.powerOn = !ui.powerOn; renderAll(); }
+  };
+
+  $('btn-quit').onclick = async () => {
+    if (!confirm('Uygulama kapatılsın mı? Klavye son ayarında kalır.')) return;
+    const res = await api('POST', '/api/server/shutdown');
+    if (res.success) $('quit-overlay').hidden = false;
+  };
+
+  $('btn-retry').onclick = async () => {
+    $('btn-retry').disabled = true;
+    const res = await api('POST', '/api/device/reconnect');
+    $('btn-retry').disabled = false;
+    if (res.status) applyStatus(res.status, { force: true });
+    if (res.success) toast('Klavyeye bağlanıldı');
+    else toast(res.error || 'Bağlanılamadı', true);
+  };
+
+  $('color-input').addEventListener('input', (e) => {
+    setPresetColor(e.target.value, false);
+    $('color-hex').value = e.target.value.toUpperCase();
+  });
+  $('color-input').addEventListener('change', (e) => setPresetColor(e.target.value, true));
+  $('color-hex').addEventListener('change', (e) => {
+    let v = e.target.value.trim();
+    if (!v.startsWith('#')) v = '#' + v;
+    if (/^#[0-9a-fA-F]{6}$/.test(v)) setPresetColor(v, true);
+    else { toast('Renk kodu #RRGGBB biçiminde olmalı', true); renderSwatches(); }
+  });
+
+  $('save-form').addEventListener('submit', saveProfile);
+
+  $('proto-select').addEventListener('change', async (e) => {
+    const res = await api('POST', '/api/device/protocol', { protocol: e.target.value || null });
+    if (res.status) renderProtocol(res.status);
+    toast(e.target.value ? 'Protokol değiştirildi; bir efekt seçerek deneyin' : 'Protokol otomatik algılanacak');
+  });
+
+  // Physical key presses light up the preview (reactive effects)
+  const byCode = () => Object.fromEntries(ui.keys.map((k) => [k.code, k]));
+  let map = null;
+  window.addEventListener('keydown', (e) => {
+    if (e.target.matches('input')) return;
+    map = map || byCode();
+    const k = map[e.code];
+    if (k) press(k);
+  });
+
+  window.addEventListener('resize', fitKeyboard);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) pollStatus(); });
+}
+
+/* ---------------- Init ---------------- */
+async function init() {
+  const [modes, layout, status, profiles] = await Promise.all([
+    api('GET', '/api/device/modes'),
+    api('GET', '/api/device/layout'),
+    api('GET', '/api/device/status'),
+    api('GET', '/api/profiles'),
+  ]);
+  if (modes.offline) {
+    $('status-text').textContent = 'Sunucu kapalı';
+    $('status-pill').className = 'pill pill-err';
+    return;
+  }
+  ui.modes = modes.modes;
+  ui.defaultPalette = modes.default_palette;
+  ui.protocols = modes.protocols;
+  ui.profiles = Array.isArray(profiles) ? profiles : [];
+
+  setupEvents();
+  buildKeyboard(layout.rows || []);
+  applyStatus(status, { force: true });
+  renderAll();
+  renderProfiles();
+  startPreview();
+  setInterval(pollStatus, 3000);
+}
+
+document.addEventListener('DOMContentLoaded', init);
